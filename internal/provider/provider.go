@@ -182,10 +182,22 @@ func (p *LaravelCloudProvider) Resources(ctx context.Context) []func() resource.
 
 // DataSources returns every data-source type the provider ships.
 // Every resource type carries a matching data source so consumers can
-// look up existing resources without importing into state.
+// look up existing resources without importing into state. The
+// `laravelcloud_organization` data source additionally supports a
+// token-scoped default lookup (no id/slug required) for callers that
+// want to resolve the "current" org without hard-coding it.
 func (p *LaravelCloudProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewApplicationDataSource,
+		NewEnvironmentDataSource,
+		NewDatabaseClusterDataSource,
+		NewDatabaseSchemaDataSource,
+		NewCacheDataSource,
+		NewBucketDataSource,
+		NewWebsocketClusterDataSource,
+		NewWebsocketAppDataSource,
+		NewDomainDataSource,
+		NewOrganizationDataSource,
 	}
 }
 
