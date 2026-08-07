@@ -13,7 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
-	"github.com/stackra/terraform-provider-laravel-cloud/internal/api"
+	"github.com/figentra/terraform-provider-laravel-cloud/internal/api"
 )
 
 // ApplicationResource manages a `laravelcloud_application` resource — the

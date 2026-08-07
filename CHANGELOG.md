@@ -59,7 +59,7 @@ on each:
 
 ### Notes
 
-- This is the FIRST release under `stackra/laravel-cloud` on the Registry.
+- This is the FIRST release under `figentra/laravel-cloud` on the Registry.
 - Consumers should pin `version = "~> 0.1"` to receive Phase 2 patches
   without breaking-change surprises.
 - Cloud CLI's write commands (`cloud:apply`, `cloud:destroy`, `cloud:sync`,

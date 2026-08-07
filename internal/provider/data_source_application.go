@@ -8,7 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"github.com/stackra/terraform-provider-laravel-cloud/internal/api"
+	"github.com/figentra/terraform-provider-laravel-cloud/internal/api"
 )
 
 // ApplicationDataSource reads an existing Cloud application by ID.

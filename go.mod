@@ -1,14 +1,14 @@
 // Terraform Provider for Laravel Cloud
 //
 // Module path matches the eventual GitHub repo location. Publishing to
-// the Terraform Registry as `stackra/laravel-cloud` requires the source
+// the Terraform Registry as `figentra/laravel-cloud` requires the source
 // repo be tagged with a semver release (v0.1.0, v0.2.0, ...) and signed
 // via GPG per the `.goreleaser.yml` config.
 //
-// The `stackra` namespace on GitHub is authoritative for the workspace's
+// The `figentra` namespace on GitHub is authoritative for the workspace's
 // OSS surface (framework packages + this provider).
 
-module github.com/stackra/terraform-provider-laravel-cloud
+module github.com/figentra/terraform-provider-laravel-cloud
 
 go 1.22
 

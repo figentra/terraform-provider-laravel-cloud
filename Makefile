@@ -14,7 +14,7 @@
 #   make release         — GoReleaser dry-run (real releases run in CI)
 
 # The Registry namespace + name. Matches the go.mod path + Registry publish.
-NAMESPACE   := stackra
+NAMESPACE   := figentra
 NAME        := laravel-cloud
 BINARY      := terraform-provider-$(NAME)
 
@@ -44,7 +44,7 @@ build:
 #
 #   provider_installation {
 #     dev_overrides {
-#       "stackra/laravel-cloud" = "~/.terraform.d/plugins/registry.terraform.io/stackra/laravel-cloud/dev/darwin_arm64"
+#       "figentra/laravel-cloud" = "~/.terraform.d/plugins/registry.terraform.io/figentra/laravel-cloud/dev/darwin_arm64"
 #     }
 #     direct {}
 #   }

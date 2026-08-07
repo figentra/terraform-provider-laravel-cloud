@@ -13,7 +13,7 @@ database clusters, caches, buckets, WebSocket clusters, and domains via
 Terraform.
 
 Published as
-[`registry.terraform.io/stackra/laravel-cloud`](https://registry.terraform.io/providers/stackra/laravel-cloud).
+[`registry.terraform.io/figentra/laravel-cloud`](https://registry.terraform.io/providers/figentra/laravel-cloud).
 
 ## Status
 
@@ -51,7 +51,7 @@ The workspace previously drove Cloud writes through the PHP CLI's
 terraform {
   required_providers {
     laravelcloud = {
-      source  = "stackra/laravel-cloud"
+      source  = "figentra/laravel-cloud"
       version = "~> 0.1"
     }
   }
@@ -105,7 +105,7 @@ make install
 cat >> ~/.terraformrc <<EOF
 provider_installation {
   dev_overrides {
-    "stackra/laravel-cloud" = "$HOME/.terraform.d/plugins/registry.terraform.io/stackra/laravel-cloud/dev/$(go env GOOS)_$(go env GOARCH)"
+    "figentra/laravel-cloud" = "$HOME/.terraform.d/plugins/registry.terraform.io/figentra/laravel-cloud/dev/$(go env GOOS)_$(go env GOARCH)"
   }
   direct {}
 }

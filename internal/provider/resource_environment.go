@@ -13,7 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"github.com/stackra/terraform-provider-laravel-cloud/internal/api"
+	"github.com/figentra/terraform-provider-laravel-cloud/internal/api"
 )
 
 // EnvironmentResource manages `laravelcloud_environment` — a per-app env

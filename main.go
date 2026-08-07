@@ -1,12 +1,12 @@
 // Package main is the Terraform Provider for Laravel Cloud entry point.
 //
-// Publishes as `registry.terraform.io/stackra/laravel-cloud`. Every consumer
+// Publishes as `registry.terraform.io/figentra/laravel-cloud`. Every consumer
 // declares this in a `required_providers` block:
 //
 //	terraform {
 //	  required_providers {
 //	    laravelcloud = {
-//	      source  = "stackra/laravel-cloud"
+//	      source  = "figentra/laravel-cloud"
 //	      version = "~> 0.1"
 //	    }
 //	  }
@@ -25,7 +25,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 
-	"github.com/stackra/terraform-provider-laravel-cloud/internal/provider"
+	"github.com/figentra/terraform-provider-laravel-cloud/internal/provider"
 )
 
 // version is stamped by GoReleaser via `-ldflags "-X main.version=<tag>"`
@@ -46,8 +46,8 @@ func main() {
 
 	opts := providerserver.ServeOpts{
 		// Registry address MUST match the tf-registry publish target.
-		// `stackra/laravel-cloud` in the public registry.
-		Address: "registry.terraform.io/stackra/laravel-cloud",
+		// `figentra/laravel-cloud` in the public registry.
+		Address: "registry.terraform.io/figentra/laravel-cloud",
 		Debug:   debug,
 	}
 

@@ -22,7 +22,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"github.com/stackra/terraform-provider-laravel-cloud/internal/api"
+	"github.com/figentra/terraform-provider-laravel-cloud/internal/api"
 )
 
 // LaravelCloudProvider satisfies `provider.Provider`. Every method (Metadata,
