@@ -1,3 +1,8 @@
+// Package provider — acceptance test for `laravelcloud_application`.
+//
+// Exercises the full CRUD lifecycle against a real Cloud org (guarded
+// by TF_ACC=1 + LARAVEL_CLOUD_TEST_ORG_ID). Shared provider factory +
+// preCheck helpers live in `provider_test.go`.
 package provider
 
 import (
@@ -5,30 +10,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/hashicorp/terraform-plugin-framework/providerserver"
-	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
-
-// testAccProtoV6ProviderFactories registers the provider under test.
-// Every acceptance test declares this factory so `terraform-plugin-testing`
-// can spin up an in-process provider instance without shelling out to
-// `terraform init`.
-var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){
-	"laravelcloud": providerserver.NewProtocol6WithError(New("test")()),
-}
-
-// testAccPreCheck runs before every acceptance test — bails out with a
-// clear message when required env vars aren't set. Called from
-// `resource.Test`'s `PreCheck` hook.
-func testAccPreCheck(t *testing.T) {
-	if os.Getenv("LARAVEL_CLOUD_TOKEN") == "" {
-		t.Fatal("LARAVEL_CLOUD_TOKEN must be set for acceptance tests")
-	}
-	if os.Getenv("LARAVEL_CLOUD_TEST_ORG_ID") == "" {
-		t.Fatal("LARAVEL_CLOUD_TEST_ORG_ID must be set for acceptance tests")
-	}
-}
 
 // TestAccApplicationResource_basic exercises the full CRUD lifecycle:
 //   - Create: apply a resource block, verify the application exists
@@ -55,7 +38,7 @@ func TestAccApplicationResource_basic(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("laravelcloud_application.test", "name", appName),
 					resource.TestCheckResourceAttr("laravelcloud_application.test", "organization_id", orgID),
-					resource.TestCheckResourceAttr("laravelcloud_application.test", "region", "us-east-1"),
+					resource.TestCheckResourceAttr("laravelcloud_application.test", "region", testAccRegion()),
 					resource.TestCheckResourceAttrSet("laravelcloud_application.test", "id"),
 					resource.TestCheckResourceAttrSet("laravelcloud_application.test", "slug"),
 					resource.TestCheckResourceAttrSet("laravelcloud_application.test", "created_at"),
@@ -86,8 +69,8 @@ func testAccApplicationResourceConfig(orgID, name string) string {
 resource "laravelcloud_application" "test" {
   organization_id              = %q
   name                         = %q
-  region                       = "us-east-1"
+  region                       = %q
   source_control_provider_type = "github"
 }
-`, orgID, name)
+`, orgID, name, testAccRegion())
 }
