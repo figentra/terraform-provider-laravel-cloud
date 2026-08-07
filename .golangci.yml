@@ -1,0 +1,83 @@
+# .golangci.yml — terraform-provider-laravel-cloud
+#
+# Lint config for the provider. Runs on every commit via CI + locally
+# via `make lint`. The rule set follows the Terraform-plugin-framework
+# projects (hashicorp/terraform-provider-hashicups, etc.) with tighter
+# comment/docblock enforcement matching this workspace's rule that
+# every source file carries docblocks + detailed inline comments.
+#
+# See https://golangci-lint.run/usage/configuration/ for the full
+# option surface.
+
+run:
+  # Timeout per file — surface long-running rules early.
+  timeout: 5m
+  # Enable Go modules mode (defaults to on in modern golangci-lint).
+  modules-download-mode: readonly
+
+linters:
+  # Start with the default enabled set + these curated additions.
+  # The defaults cover errcheck, gosimple, govet, ineffassign, staticcheck,
+  # unused — the workspace essentials.
+  enable:
+    - bodyclose        # Every http.Response.Body gets closed.
+    - dupl             # Copy-paste detector — data sources share shape.
+    - gocritic         # Idiom checker across the standard critics.
+    - gofmt            # Enforce `make fmt` was run.
+    - goimports        # Enforce import grouping.
+    - gosec            # Security scanner — surfaces token handling smells.
+    - misspell         # Catches typos in comments + docs.
+    - nakedret         # Bans naked returns in long functions.
+    - prealloc         # Suggests slice-pre-allocation.
+    - revive           # Style checker — replaces the deprecated golint.
+    - unconvert        # Removes redundant type conversions.
+    - unparam          # Flags unused function parameters.
+    - whitespace       # Trims trailing whitespace.
+
+linters-settings:
+  # gocritic — enable the "opinionated" checks that catch reviewer nits.
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+      - experimental
+
+  # revive — every exported symbol needs a doc comment. Enforces our
+  # workspace-wide rule (docblocks + detailed inline comments).
+  revive:
+    rules:
+      - name: exported
+        disabled: false
+      - name: package-comments
+        disabled: false
+      - name: var-naming
+        disabled: false
+      - name: unexported-return
+        disabled: false
+
+  # gosec — allow context.Background() in tests + main; block it elsewhere.
+  gosec:
+    excludes:
+      - G306  # File permissions — token file writes chmod 0600 explicitly.
+
+issues:
+  # Fail on the first issue in CI — keeps the signal high.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+  # Skip generated code + third-party fixtures.
+  exclude-dirs:
+    - dist
+    - docs
+    - examples
+
+  # Test files carry different linting priorities — allow long functions
+  # + naked returns inside acceptance tests where the shape is dictated
+  # by the HashiCorp test framework.
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - dupl
+        - gocritic
+        - gosec

@@ -1,0 +1,31 @@
+# CODEOWNERS — terraform-provider-laravel-cloud
+#
+# GitHub uses this file to auto-request reviews from the listed owners
+# whenever a matching path is touched. Every unmatched path falls
+# through to the global `*` line at the bottom.
+#
+# Order matters — the LAST matching pattern wins. So specialised
+# patterns for hot paths (release scripts, .github/) live below the
+# broad-brush `*` fallback so specialists get the review.
+#
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-security/customizing-your-repository/about-code-owners
+
+# Everything defaults to the workspace maintainer.
+*                                    @akouta
+
+# The API-client + provider hotpaths — same owner for now; keeping the
+# pattern here documents where a future co-maintainer would slot in.
+/internal/api/                       @akouta
+/internal/provider/                  @akouta
+
+# Release + CI touch-points — every mutation gates on a full
+# GoReleaser dry-run.
+/.github/                            @akouta
+/.goreleaser.yml                     @akouta
+/GNUmakefile                         @akouta
+
+# Docs live alongside code but are safe to auto-approve for the same
+# owner. Kept as a distinct block so a future tech-writer role has an
+# obvious slot.
+/docs/                               @akouta
+/examples/                           @akouta

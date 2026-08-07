@@ -1,0 +1,51 @@
+# .github/dependabot.yml — terraform-provider-laravel-cloud
+#
+# Dependabot auto-opens PRs when Go modules or GitHub Actions versions
+# publish an update. Two ecosystems + the workspace-canonical review
+# cadence (weekly Monday).
+#
+# See: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+
+updates:
+  # Go modules — bumps every dep in go.mod (Terraform Plugin Framework,
+  # httptest, the plugin-testing helpers, etc.).
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Europe/Cairo
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - go
+    commit-message:
+      prefix: chore
+      include: scope
+    # Group patch + minor bumps into one PR per major to keep the queue
+    # short. Major bumps stay individual so their release notes get read.
+    groups:
+      go-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - patch
+          - minor
+
+  # GitHub Actions — bumps every `uses:` line across .github/workflows/.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Europe/Cairo
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: chore
+      include: scope
