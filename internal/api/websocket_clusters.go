@@ -1,0 +1,79 @@
+package api
+
+import (
+	"context"
+	"errors"
+	"fmt"
+)
+
+// WebsocketCluster is a Reverb-compatible cluster hosting one or more
+// WebsocketApp bindings per environment.
+type WebsocketCluster struct {
+	ID             string  `json:"id"`
+	OrganizationID string  `json:"organization_id"`
+	Name           string  `json:"name"`
+	Region         string  `json:"region"`
+	Size           string  `json:"size"`
+	MaxConnections int     `json:"max_connections"`
+	Status         *string `json:"status"`
+	CreatedAt      *string `json:"created_at"`
+}
+
+// CreateWebsocketClusterRequest is POST /websocket-servers.
+type CreateWebsocketClusterRequest struct {
+	OrganizationID string `json:"organization_id"`
+	Name           string `json:"name"`
+	Region         string `json:"region"`
+	Size           string `json:"size"`
+	MaxConnections int    `json:"max_connections"`
+}
+
+// UpdateWebsocketClusterRequest is PATCH /websocket-servers/:id.
+type UpdateWebsocketClusterRequest struct {
+	Size           *string `json:"size,omitempty"`
+	MaxConnections *int    `json:"max_connections,omitempty"`
+}
+
+// CreateWebsocketCluster provisions a WS cluster.
+func (c *Client) CreateWebsocketCluster(ctx context.Context, req CreateWebsocketClusterRequest) (*WebsocketCluster, error) {
+	var env Envelope[WebsocketCluster]
+	if err := c.do(ctx, "POST", "/websocket-servers", req, &env); err != nil {
+		return nil, fmt.Errorf("create websocket cluster: %w", err)
+	}
+	return &env.Data, nil
+}
+
+// GetWebsocketCluster reads a WS cluster by ID.
+func (c *Client) GetWebsocketCluster(ctx context.Context, id string) (*WebsocketCluster, error) {
+	if id == "" {
+		return nil, errors.New("cluster id is required")
+	}
+	var env Envelope[WebsocketCluster]
+	if err := c.do(ctx, "GET", "/websocket-servers/"+id, nil, &env); err != nil {
+		return nil, err
+	}
+	return &env.Data, nil
+}
+
+// UpdateWebsocketCluster PATCHes size + max_connections.
+func (c *Client) UpdateWebsocketCluster(ctx context.Context, id string, req UpdateWebsocketClusterRequest) (*WebsocketCluster, error) {
+	if id == "" {
+		return nil, errors.New("cluster id is required")
+	}
+	var env Envelope[WebsocketCluster]
+	if err := c.do(ctx, "PATCH", "/websocket-servers/"+id, req, &env); err != nil {
+		return nil, fmt.Errorf("update websocket cluster: %w", err)
+	}
+	return &env.Data, nil
+}
+
+// DeleteWebsocketCluster tears down the cluster.
+func (c *Client) DeleteWebsocketCluster(ctx context.Context, id string) error {
+	if id == "" {
+		return errors.New("cluster id is required")
+	}
+	if err := c.do(ctx, "DELETE", "/websocket-servers/"+id, nil, nil); err != nil {
+		return fmt.Errorf("delete websocket cluster: %w", err)
+	}
+	return nil
+}

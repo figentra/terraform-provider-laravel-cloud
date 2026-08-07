@@ -163,16 +163,26 @@ func (p *LaravelCloudProvider) Configure(ctx context.Context, req provider.Confi
 	resp.DataSourceData = client
 }
 
-// Resources returns every managed-resource type the provider ships. Add
-// new resources here as Phase 2 lands them.
+// Resources returns every managed-resource type the provider ships.
+// The full canonical set (v0.2.0) covers every write-path Laravel Cloud
+// primitive the workspace's `.kiro/cloud/apps/*.yaml` manifests declare.
 func (p *LaravelCloudProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewApplicationResource,
+		NewEnvironmentResource,
+		NewDatabaseClusterResource,
+		NewDatabaseSchemaResource,
+		NewCacheResource,
+		NewBucketResource,
+		NewWebsocketClusterResource,
+		NewWebsocketAppResource,
+		NewDomainResource,
 	}
 }
 
-// DataSources returns every data-source type the provider ships. Add
-// new data sources here as Phase 2 lands them.
+// DataSources returns every data-source type the provider ships.
+// Every resource type carries a matching data source so consumers can
+// look up existing resources without importing into state.
 func (p *LaravelCloudProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewApplicationDataSource,

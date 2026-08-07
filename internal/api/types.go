@@ -68,22 +68,9 @@ type Organization struct {
 	Slug string `json:"slug"`
 }
 
-// Environment is a per-app deploy target (dev/stg/prd + preview-*).
-// Full CRUD lands in Phase 2 of the pivot plan; the struct is defined here
-// so `include=environments` on the Application read path unmarshals cleanly.
-type Environment struct {
-	ID              string             `json:"id"`
-	ApplicationID   string             `json:"application_id"`
-	Name            string             `json:"name"`
-	Branch          *string            `json:"branch"`
-	Variables       map[string]string  `json:"variables"`
-	DatabaseSchemaID *string           `json:"database_schema_id"`
-	CacheID         *string            `json:"cache_id"`
-	WebsocketAppID  *string            `json:"websocket_app_id"`
-	InheritsID      *string            `json:"inherits_id"`
-	CreatedAt       *time.Time         `json:"created_at"`
-	UpdatedAt       *time.Time         `json:"updated_at"`
-}
+// Environment lives in `environments.go`. Included here as a documentation
+// anchor: the `Application` struct's `Environments []Environment` field
+// unmarshals via reflection against the type declared in that file.
 
 // Envelope is Cloud's JSON:API-ish response wrapper. Every singleton read
 // returns `{"data": <resource>, "included": [...]}` — the `Data` field
