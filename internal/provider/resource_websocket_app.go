@@ -22,9 +22,11 @@ type WebsocketAppResource struct{ client *api.Client }
 type WebsocketAppResourceModel struct {
 	ID             types.String `tfsdk:"id"`
 	ClusterID      types.String `tfsdk:"cluster_id"`
+	Name           types.String `tfsdk:"name"`
 	EnvironmentID  types.String `tfsdk:"environment_id"`
 	MaxConnections types.Int64  `tfsdk:"max_connections"`
 	AppKey         types.String `tfsdk:"app_key"`
+	AppSecret      types.String `tfsdk:"app_secret"`
 	CreatedAt      types.String `tfsdk:"created_at"`
 }
 
@@ -38,11 +40,23 @@ func (r *WebsocketAppResource) Schema(_ context.Context, _ resource.SchemaReques
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Binds one environment to a `laravelcloud_websocket_cluster` with a per-env max_connections cap.",
 		Attributes: map[string]schema.Attribute{
-			"id":              schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"cluster_id":      schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
-			"environment_id":  schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+			"id":         schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"cluster_id": schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+			"name": schema.StringAttribute{
+				MarkdownDescription: "Human-readable WS app label. Added in v0.4.0.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"environment_id": schema.StringAttribute{
+				MarkdownDescription: "Pre-v0.4 environment binding. v0.4 modules bind via `laravelcloud_environment.websocket_application_id` instead — this field remains Optional for backward compat.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace(), stringplanmodifier.UseStateForUnknown()},
+			},
 			"max_connections": schema.Int64Attribute{Optional: true, Computed: true, MarkdownDescription: "Per-env connection cap; falls back to cluster default when unset."},
 			"app_key":         schema.StringAttribute{Computed: true, MarkdownDescription: "Reverb app key issued by Cloud. Read-only."},
+			"app_secret":      schema.StringAttribute{Computed: true, Sensitive: true, MarkdownDescription: "Reverb app secret issued by Cloud. Read-only, sensitive."},
 			"created_at":      schema.StringAttribute{Computed: true},
 		},
 	}
@@ -66,7 +80,13 @@ func (r *WebsocketAppResource) Create(ctx context.Context, req resource.CreateRe
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	apiReq := api.CreateWebsocketAppRequest{EnvironmentID: plan.EnvironmentID.ValueString()}
+	apiReq := api.CreateWebsocketAppRequest{}
+	if !plan.EnvironmentID.IsNull() && !plan.EnvironmentID.IsUnknown() {
+		apiReq.EnvironmentID = plan.EnvironmentID.ValueString()
+	}
+	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
+		apiReq.Name = plan.Name.ValueString()
+	}
 	if !plan.MaxConnections.IsNull() && !plan.MaxConnections.IsUnknown() {
 		apiReq.MaxConnections = int(plan.MaxConnections.ValueInt64())
 	}
@@ -106,6 +126,10 @@ func (r *WebsocketAppResource) Update(ctx context.Context, req resource.UpdateRe
 		return
 	}
 	apiReq := api.UpdateWebsocketAppRequest{}
+	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
+		v := plan.Name.ValueString()
+		apiReq.Name = &v
+	}
 	if !plan.MaxConnections.IsNull() && !plan.MaxConnections.IsUnknown() {
 		v := int(plan.MaxConnections.ValueInt64())
 		apiReq.MaxConnections = &v
@@ -141,22 +165,24 @@ func (r *WebsocketAppResource) ImportState(ctx context.Context, req resource.Imp
 func applyWSAppToModel(a *api.WebsocketApp, m *WebsocketAppResourceModel) {
 	m.ID = types.StringValue(a.ID)
 	m.ClusterID = types.StringValue(a.ClusterID)
-	m.EnvironmentID = types.StringValue(a.EnvironmentID)
+	if a.Name != "" {
+		m.Name = types.StringValue(a.Name)
+	} else {
+		m.Name = types.StringNull()
+	}
+	if a.EnvironmentID != "" {
+		m.EnvironmentID = types.StringValue(a.EnvironmentID)
+	} else {
+		m.EnvironmentID = types.StringNull()
+	}
 	if a.MaxConnections != nil {
 		m.MaxConnections = types.Int64Value(int64(*a.MaxConnections))
 	} else {
 		m.MaxConnections = types.Int64Null()
 	}
-	if a.AppKey != nil {
-		m.AppKey = types.StringValue(*a.AppKey)
-	} else {
-		m.AppKey = types.StringNull()
-	}
-	if a.CreatedAt != nil {
-		m.CreatedAt = types.StringValue(*a.CreatedAt)
-	} else {
-		m.CreatedAt = types.StringNull()
-	}
+	setStringPtr(&m.AppKey, a.AppKey)
+	setStringPtr(&m.AppSecret, a.AppSecret)
+	setStringPtr(&m.CreatedAt, a.CreatedAt)
 }
 
 var (

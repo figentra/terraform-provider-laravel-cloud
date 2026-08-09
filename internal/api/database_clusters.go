@@ -8,37 +8,63 @@ import (
 
 // DatabaseCluster is a shared Postgres or MySQL cluster hosting one or more
 // per-service schemas.
+//
+// v0.4.0 attribute expansion: added `Type` (Cloud's v2 cluster-type slug
+// such as `neon_serverless_postgres_18`) + `Config` (a free-form map of
+// type-specific tuning knobs — cu_min, cu_max, suspend_seconds, ...) so
+// consumers on Cloud v2 can provision the newer serverless clusters. The
+// pre-v0.4 (`Engine` + `Size` + `HighAvailability`) fields are kept as
+// Optional/Computed for backward compatibility.
 type DatabaseCluster struct {
-	ID                  string  `json:"id"`
-	OrganizationID      string  `json:"organization_id"`
-	Name                string  `json:"name"`
-	Region              string  `json:"region"`
-	Engine              string  `json:"engine"` // "postgres-16", "mysql-8", ...
-	Size                string  `json:"size"`
-	HighAvailability    bool    `json:"high_availability"`
-	BackupRetentionDays int     `json:"backup_retention_days"`
-	Status              *string `json:"status"`
-	CreatedAt           *string `json:"created_at"`
-	UpdatedAt           *string `json:"updated_at"`
+	ID             string `json:"id"`
+	OrganizationID string `json:"organization_id"`
+	Name           string `json:"name"`
+	Region         string `json:"region"`
+
+	// Type is the Cloud v2 cluster type slug — e.g.
+	// `neon_serverless_postgres_18`, `postgres_16`, `mysql_8`. Added
+	// in v0.4.0.
+	Type *string `json:"type,omitempty"`
+
+	// Config is the free-form v2 tuning bag — cu_min, cu_max,
+	// suspend_seconds, retention_days, etc. Added in v0.4.0.
+	Config map[string]any `json:"config,omitempty"`
+
+	// Pre-v0.4 attributes (kept for backward compat)
+	Engine              string `json:"engine,omitempty"`
+	Size                string `json:"size,omitempty"`
+	HighAvailability    bool   `json:"high_availability,omitempty"`
+	BackupRetentionDays int    `json:"backup_retention_days,omitempty"`
+
+	Status    *string `json:"status,omitempty"`
+	CreatedAt *string `json:"created_at,omitempty"`
+	UpdatedAt *string `json:"updated_at,omitempty"`
 }
 
 // CreateDatabaseClusterRequest is the POST /databases/clusters body.
 type CreateDatabaseClusterRequest struct {
-	OrganizationID      string `json:"organization_id"`
-	Name                string `json:"name"`
-	Region              string `json:"region"`
-	Engine              string `json:"engine"`
-	Size                string `json:"size"`
-	HighAvailability    bool   `json:"high_availability"`
+	OrganizationID string `json:"organization_id,omitempty"`
+	Name           string `json:"name"`
+	Region         string `json:"region,omitempty"`
+
+	// v0.4 canonical
+	Type   *string        `json:"type,omitempty"`
+	Config map[string]any `json:"config,omitempty"`
+
+	// pre-v0.4
+	Engine              string `json:"engine,omitempty"`
+	Size                string `json:"size,omitempty"`
+	HighAvailability    bool   `json:"high_availability,omitempty"`
 	BackupRetentionDays int    `json:"backup_retention_days,omitempty"`
 }
 
 // UpdateDatabaseClusterRequest is PATCH /databases/clusters/:id.
 type UpdateDatabaseClusterRequest struct {
-	Name                *string `json:"name,omitempty"`
-	Size                *string `json:"size,omitempty"`
-	HighAvailability    *bool   `json:"high_availability,omitempty"`
-	BackupRetentionDays *int    `json:"backup_retention_days,omitempty"`
+	Name                *string        `json:"name,omitempty"`
+	Config              map[string]any `json:"config,omitempty"`
+	Size                *string        `json:"size,omitempty"`
+	HighAvailability    *bool          `json:"high_availability,omitempty"`
+	BackupRetentionDays *int           `json:"backup_retention_days,omitempty"`
 }
 
 // CreateDatabaseCluster provisions a new shared database cluster.

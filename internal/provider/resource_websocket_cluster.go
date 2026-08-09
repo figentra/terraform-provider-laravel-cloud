@@ -24,6 +24,7 @@ type WebsocketClusterResourceModel struct {
 	OrganizationID types.String `tfsdk:"organization_id"`
 	Name           types.String `tfsdk:"name"`
 	Region         types.String `tfsdk:"region"`
+	Type           types.String `tfsdk:"type"`
 	Size           types.String `tfsdk:"size"`
 	MaxConnections types.Int64  `tfsdk:"max_connections"`
 	CreatedAt      types.String `tfsdk:"created_at"`
@@ -39,13 +40,38 @@ func (r *WebsocketClusterResource) Schema(_ context.Context, _ resource.SchemaRe
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Reverb-compatible WebSocket cluster hosting one WS app per environment.",
 		Attributes: map[string]schema.Attribute{
-			"id":              schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"organization_id": schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
-			"name":            schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
-			"region":          schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
-			"size":            schema.StringAttribute{Required: true, MarkdownDescription: "Cluster size — e.g. `ws.s-1vcpu-1gb`, `ws.m-4vcpu-4gb`."},
-			"max_connections": schema.Int64Attribute{Required: true, MarkdownDescription: "Global cap on concurrent connections."},
-			"created_at":      schema.StringAttribute{Computed: true},
+			"id": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"organization_id": schema.StringAttribute{
+				MarkdownDescription: "Owning organisation. Optional in v0.4.0 — Cloud infers from token when unset.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace(), stringplanmodifier.UseStateForUnknown()},
+			},
+			"name": schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+			"region": schema.StringAttribute{
+				MarkdownDescription: "Deploy region. Optional in v0.4.0 — Cloud derives from organisation.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace(), stringplanmodifier.UseStateForUnknown()},
+			},
+			"type": schema.StringAttribute{
+				MarkdownDescription: "Cluster type — `reverb` (Reverb-native). Added in v0.4.0. Immutable — forces replace.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace(), stringplanmodifier.UseStateForUnknown()},
+			},
+			"size": schema.StringAttribute{
+				MarkdownDescription: "Cluster size — e.g. `ws.s-1vcpu-1gb`. Optional in v0.4.0.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"max_connections": schema.Int64Attribute{
+				MarkdownDescription: "Global cap on concurrent connections.",
+				Optional:            true,
+				Computed:            true,
+			},
+			"created_at": schema.StringAttribute{Computed: true},
 		},
 	}
 }
@@ -68,13 +94,24 @@ func (r *WebsocketClusterResource) Create(ctx context.Context, req resource.Crea
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	cluster, err := r.client.CreateWebsocketCluster(ctx, api.CreateWebsocketClusterRequest{
-		OrganizationID: plan.OrganizationID.ValueString(),
-		Name:           plan.Name.ValueString(),
-		Region:         plan.Region.ValueString(),
-		Size:           plan.Size.ValueString(),
-		MaxConnections: int(plan.MaxConnections.ValueInt64()),
-	})
+	apiReq := api.CreateWebsocketClusterRequest{Name: plan.Name.ValueString()}
+	if !plan.OrganizationID.IsNull() && !plan.OrganizationID.IsUnknown() {
+		apiReq.OrganizationID = plan.OrganizationID.ValueString()
+	}
+	if !plan.Region.IsNull() && !plan.Region.IsUnknown() {
+		apiReq.Region = plan.Region.ValueString()
+	}
+	if !plan.Type.IsNull() && !plan.Type.IsUnknown() {
+		v := plan.Type.ValueString()
+		apiReq.Type = &v
+	}
+	if !plan.Size.IsNull() && !plan.Size.IsUnknown() {
+		apiReq.Size = plan.Size.ValueString()
+	}
+	if !plan.MaxConnections.IsNull() && !plan.MaxConnections.IsUnknown() {
+		apiReq.MaxConnections = int(plan.MaxConnections.ValueInt64())
+	}
+	cluster, err := r.client.CreateWebsocketCluster(ctx, apiReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create websocket cluster", err.Error())
 		return
@@ -151,13 +188,14 @@ func applyWSClusterToModel(c *api.WebsocketCluster, m *WebsocketClusterResourceM
 	m.OrganizationID = types.StringValue(c.OrganizationID)
 	m.Name = types.StringValue(c.Name)
 	m.Region = types.StringValue(c.Region)
-	m.Size = types.StringValue(c.Size)
-	m.MaxConnections = types.Int64Value(int64(c.MaxConnections))
-	if c.CreatedAt != nil {
-		m.CreatedAt = types.StringValue(*c.CreatedAt)
+	setStringPtr(&m.Type, c.Type)
+	if c.Size != "" {
+		m.Size = types.StringValue(c.Size)
 	} else {
-		m.CreatedAt = types.StringNull()
+		m.Size = types.StringNull()
 	}
+	m.MaxConnections = types.Int64Value(int64(c.MaxConnections))
+	setStringPtr(&m.CreatedAt, c.CreatedAt)
 }
 
 var (

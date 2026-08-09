@@ -6,26 +6,43 @@ import (
 	"fmt"
 )
 
-// WebsocketApp binds an environment to a WebsocketCluster.
+// WebsocketApp is a Reverb app registered under a WebsocketCluster.
+//
+// v0.4.0 attribute expansion: named apps (via `Name`) instead of the
+// pre-v0.4 environment-bound pattern. Environments now reference apps by
+// ID via `Environment.WebsocketApplicationID`, letting operators share
+// one WS app across multiple envs when appropriate.
 type WebsocketApp struct {
-	ID             string  `json:"id"`
-	ClusterID      string  `json:"cluster_id"`
-	EnvironmentID  string  `json:"environment_id"`
-	MaxConnections *int    `json:"max_connections"`
-	AppKey         *string `json:"app_key"`
-	Status         *string `json:"status"`
-	CreatedAt      *string `json:"created_at"`
+	ID        string `json:"id"`
+	ClusterID string `json:"cluster_id"`
+
+	// Name is the human-readable app label. Added in v0.4.0.
+	Name string `json:"name,omitempty"`
+
+	// EnvironmentID is the pre-v0.4 binding. Kept for backward
+	// compatibility; v0.4 modules use `Environment.WebsocketApplicationID`
+	// instead.
+	EnvironmentID string `json:"environment_id,omitempty"`
+
+	MaxConnections *int    `json:"max_connections,omitempty"`
+	AppKey         *string `json:"app_key,omitempty"`
+	AppSecret      *string `json:"app_secret,omitempty"`
+	Status         *string `json:"status,omitempty"`
+	CreatedAt      *string `json:"created_at,omitempty"`
+	UpdatedAt      *string `json:"updated_at,omitempty"`
 }
 
 // CreateWebsocketAppRequest is POST /websocket-servers/:clusterId/applications.
 type CreateWebsocketAppRequest struct {
-	EnvironmentID  string `json:"environment_id"`
+	Name           string `json:"name,omitempty"`
+	EnvironmentID  string `json:"environment_id,omitempty"`
 	MaxConnections int    `json:"max_connections,omitempty"`
 }
 
-// UpdateWebsocketAppRequest is PATCH — only max_connections is mutable.
+// UpdateWebsocketAppRequest is PATCH — name + max_connections mutable.
 type UpdateWebsocketAppRequest struct {
-	MaxConnections *int `json:"max_connections,omitempty"`
+	Name           *string `json:"name,omitempty"`
+	MaxConnections *int    `json:"max_connections,omitempty"`
 }
 
 // CreateWebsocketApp binds an environment to a WS cluster.

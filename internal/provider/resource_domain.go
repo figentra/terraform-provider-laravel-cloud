@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -16,17 +17,34 @@ import (
 )
 
 // DomainResource manages `laravelcloud_domain` — a custom hostname binding.
+//
+// v0.4.0 attribute expansion:
+//   - `www_redirect` — new canonical name for redirect_from_www (bool)
+//   - `verification_method` — new canonical name for verification (string)
+//   - `cloudflare_strategy` — new canonical name for cloudflare_managed
+//     (was bool, now string enum: "cloudflare-managed", "manual", etc.)
+//
+// Both name families work; the provider aliases them onto the wire.
 type DomainResource struct{ client *api.Client }
 
 type DomainResourceModel struct {
-	ID                types.String `tfsdk:"id"`
-	EnvironmentID     types.String `tfsdk:"environment_id"`
-	Name              types.String `tfsdk:"name"`
+	ID            types.String `tfsdk:"id"`
+	EnvironmentID types.String `tfsdk:"environment_id"`
+	Name          types.String `tfsdk:"name"`
+
+	// Pre-v0.4 names
 	RedirectFromWWW   types.Bool   `tfsdk:"redirect_from_www"`
-	WildcardEnabled   types.Bool   `tfsdk:"wildcard_enabled"`
 	CloudflareManaged types.Bool   `tfsdk:"cloudflare_managed"`
 	Verification      types.String `tfsdk:"verification"`
-	CreatedAt         types.String `tfsdk:"created_at"`
+
+	// v0.4 canonical names. WWWRedirect is a STRING enum in v2 —
+	// "www_to_root", "root_to_www", "none".
+	WWWRedirect        types.String `tfsdk:"www_redirect"`
+	CloudflareStrategy types.String `tfsdk:"cloudflare_strategy"`
+	VerificationMethod types.String `tfsdk:"verification_method"`
+
+	WildcardEnabled types.Bool   `tfsdk:"wildcard_enabled"`
+	CreatedAt       types.String `tfsdk:"created_at"`
 }
 
 func NewDomainResource() resource.Resource { return &DomainResource{} }
@@ -37,16 +55,66 @@ func (r *DomainResource) Metadata(_ context.Context, req resource.MetadataReques
 
 func (r *DomainResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Custom hostname bound to a Cloud environment. Verification is `real_time` when using cloudflare_managed; otherwise operators verify a TXT record manually.",
+		MarkdownDescription: "Custom hostname bound to a Cloud environment. v0.4.0 renames — use `www_redirect`, `verification_method`, `cloudflare_strategy`. Pre-v0.4 names (`redirect_from_www`, `verification`, `cloudflare_managed`) are kept for backward compatibility.",
 		Attributes: map[string]schema.Attribute{
-			"id":                 schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"environment_id":     schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
-			"name":               schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}, MarkdownDescription: "Fully-qualified hostname (immutable)."},
-			"redirect_from_www":  schema.BoolAttribute{Optional: true, Computed: true},
-			"wildcard_enabled":   schema.BoolAttribute{Optional: true, Computed: true},
-			"cloudflare_managed": schema.BoolAttribute{Optional: true, Computed: true, MarkdownDescription: "When true, Cloud manages the DNS record via the Cloudflare integration."},
-			"verification":       schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "`real_time` or `manual`."},
-			"created_at":         schema.StringAttribute{Computed: true},
+			"id": schema.StringAttribute{
+				Computed:      true,
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"environment_id": schema.StringAttribute{
+				Required:      true,
+				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
+			},
+			"name": schema.StringAttribute{
+				Required:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				MarkdownDescription: "Fully-qualified hostname (immutable).",
+			},
+			"redirect_from_www": schema.BoolAttribute{
+				MarkdownDescription: "**Deprecated in v0.4.0** — use `www_redirect`.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
+				DeprecationMessage:  "Use `www_redirect` instead.",
+			},
+			"www_redirect": schema.StringAttribute{
+				MarkdownDescription: "Redirect strategy — `www_to_root`, `root_to_www`, or `none`. Added in v0.4.0 (typed enum; was bool pre-v0.4 as `redirect_from_www`).",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"wildcard_enabled": schema.BoolAttribute{
+				Optional:      true,
+				Computed:      true,
+				PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
+			},
+			"cloudflare_managed": schema.BoolAttribute{
+				MarkdownDescription: "**Deprecated in v0.4.0** — use `cloudflare_strategy`.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
+				DeprecationMessage:  "Use `cloudflare_strategy` instead — v0.4.0 exposes a richer enum.",
+			},
+			"cloudflare_strategy": schema.StringAttribute{
+				MarkdownDescription: "Cloudflare integration strategy — `cloudflare-managed`, `manual`, `origin`, or Cloud-defined. Added in v0.4.0.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"verification": schema.StringAttribute{
+				MarkdownDescription: "**Deprecated in v0.4.0** — use `verification_method`.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				DeprecationMessage:  "Use `verification_method` instead.",
+			},
+			"verification_method": schema.StringAttribute{
+				MarkdownDescription: "DNS verification method — `real_time`, `manual`, `dns-txt`, `http`. Added in v0.4.0.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"created_at": schema.StringAttribute{Computed: true},
 		},
 	}
 }
@@ -70,16 +138,38 @@ func (r *DomainResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 	apiReq := api.CreateDomainRequest{Name: plan.Name.ValueString()}
-	if !plan.RedirectFromWWW.IsNull() && !plan.RedirectFromWWW.IsUnknown() {
-		apiReq.RedirectFromWWW = plan.RedirectFromWWW.ValueBool()
+
+	// www_redirect is a v2 string enum; redirect_from_www is a v1 bool.
+	// Send whichever the caller set. Cloud accepts either family.
+	if !plan.WWWRedirect.IsNull() && !plan.WWWRedirect.IsUnknown() {
+		v := plan.WWWRedirect.ValueString()
+		apiReq.WWWRedirect = &v
+		apiReq.RedirectFromWWW = v == "www_to_root" || v == "root_to_www"
+	} else if !plan.RedirectFromWWW.IsNull() && !plan.RedirectFromWWW.IsUnknown() {
+		b := plan.RedirectFromWWW.ValueBool()
+		apiReq.RedirectFromWWW = b
+		if b {
+			s := "www_to_root"
+			apiReq.WWWRedirect = &s
+		}
 	}
 	if !plan.WildcardEnabled.IsNull() && !plan.WildcardEnabled.IsUnknown() {
 		apiReq.WildcardEnabled = plan.WildcardEnabled.ValueBool()
 	}
-	if !plan.CloudflareManaged.IsNull() && !plan.CloudflareManaged.IsUnknown() {
+	if !plan.CloudflareStrategy.IsNull() && !plan.CloudflareStrategy.IsUnknown() {
+		v := plan.CloudflareStrategy.ValueString()
+		apiReq.CloudflareStrategy = &v
+		// If strategy is "cloudflare-managed" (or contains "cloudflare"), also
+		// set the boolean flag for pre-v0.4 API compat.
+		apiReq.CloudflareManaged = v != "manual" && v != "none"
+	} else if !plan.CloudflareManaged.IsNull() && !plan.CloudflareManaged.IsUnknown() {
 		apiReq.CloudflareManaged = plan.CloudflareManaged.ValueBool()
 	}
-	if !plan.Verification.IsNull() && !plan.Verification.IsUnknown() {
+	if !plan.VerificationMethod.IsNull() && !plan.VerificationMethod.IsUnknown() {
+		v := plan.VerificationMethod.ValueString()
+		apiReq.VerificationMethod = &v
+		apiReq.Verification = v
+	} else if !plan.Verification.IsNull() && !plan.Verification.IsUnknown() {
 		apiReq.Verification = plan.Verification.ValueString()
 	}
 	domain, err := r.client.CreateDomain(ctx, plan.EnvironmentID.ValueString(), apiReq)
@@ -118,9 +208,18 @@ func (r *DomainResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 	apiReq := api.UpdateDomainRequest{}
-	if !plan.RedirectFromWWW.IsNull() && !plan.RedirectFromWWW.IsUnknown() {
-		v := plan.RedirectFromWWW.ValueBool()
-		apiReq.RedirectFromWWW = &v
+	if !plan.WWWRedirect.IsNull() && !plan.WWWRedirect.IsUnknown() {
+		v := plan.WWWRedirect.ValueString()
+		apiReq.WWWRedirect = &v
+		b := v == "www_to_root" || v == "root_to_www"
+		apiReq.RedirectFromWWW = &b
+	} else if !plan.RedirectFromWWW.IsNull() && !plan.RedirectFromWWW.IsUnknown() {
+		b := plan.RedirectFromWWW.ValueBool()
+		apiReq.RedirectFromWWW = &b
+		if b {
+			s := "www_to_root"
+			apiReq.WWWRedirect = &s
+		}
 	}
 	if !plan.WildcardEnabled.IsNull() && !plan.WildcardEnabled.IsUnknown() {
 		v := plan.WildcardEnabled.ValueBool()
@@ -154,14 +253,53 @@ func (r *DomainResource) ImportState(ctx context.Context, req resource.ImportSta
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
+// applyDomainToModel copies API DTO -> Terraform state model. Handles the
+// pre-v0.4 <-> v0.4 name aliasing so consumers using either family see
+// consistent state.
 func applyDomainToModel(d *api.Domain, m *DomainResourceModel) {
 	m.ID = types.StringValue(d.ID)
 	m.EnvironmentID = types.StringValue(d.EnvironmentID)
 	m.Name = types.StringValue(d.Name)
-	m.RedirectFromWWW = types.BoolValue(d.RedirectFromWWW)
 	m.WildcardEnabled = types.BoolValue(d.WildcardEnabled)
-	m.CloudflareManaged = types.BoolValue(d.CloudflareManaged)
-	m.Verification = types.StringValue(d.Verification)
+
+	// www_redirect / redirect_from_www — alias. WWWRedirect is a v2
+	// string enum; RedirectFromWWW is the v1 bool derived from it.
+	if d.WWWRedirect != nil {
+		m.WWWRedirect = types.StringValue(*d.WWWRedirect)
+		m.RedirectFromWWW = types.BoolValue(*d.WWWRedirect == "www_to_root" || *d.WWWRedirect == "root_to_www")
+	} else if d.RedirectFromWWW {
+		m.WWWRedirect = types.StringValue("www_to_root")
+		m.RedirectFromWWW = types.BoolValue(true)
+	} else {
+		m.WWWRedirect = types.StringValue("none")
+		m.RedirectFromWWW = types.BoolValue(false)
+	}
+
+	// cloudflare_strategy / cloudflare_managed — alias.
+	if d.CloudflareStrategy != nil {
+		m.CloudflareStrategy = types.StringValue(*d.CloudflareStrategy)
+		// Best-effort bool from string.
+		m.CloudflareManaged = types.BoolValue(*d.CloudflareStrategy != "manual" && *d.CloudflareStrategy != "none")
+	} else if d.CloudflareManaged {
+		m.CloudflareStrategy = types.StringValue("cloudflare-managed")
+		m.CloudflareManaged = types.BoolValue(true)
+	} else {
+		m.CloudflareStrategy = types.StringValue("manual")
+		m.CloudflareManaged = types.BoolValue(false)
+	}
+
+	// verification_method / verification — alias.
+	if d.VerificationMethod != nil {
+		m.VerificationMethod = types.StringValue(*d.VerificationMethod)
+		m.Verification = types.StringValue(*d.VerificationMethod)
+	} else if d.Verification != "" {
+		m.VerificationMethod = types.StringValue(d.Verification)
+		m.Verification = types.StringValue(d.Verification)
+	} else {
+		m.VerificationMethod = types.StringNull()
+		m.Verification = types.StringNull()
+	}
+
 	if d.CreatedAt != nil {
 		m.CreatedAt = types.StringValue(*d.CreatedAt)
 	} else {

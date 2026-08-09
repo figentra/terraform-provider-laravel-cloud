@@ -8,24 +8,35 @@ import (
 
 // WebsocketCluster is a Reverb-compatible cluster hosting one or more
 // WebsocketApp bindings per environment.
+//
+// v0.4.0: added `Type` (v2 cluster-type slug — currently only `reverb`)
+// alongside the pre-v0.4 `Size`. Both remain optional; Cloud infers when
+// only one is set.
 type WebsocketCluster struct {
-	ID             string  `json:"id"`
-	OrganizationID string  `json:"organization_id"`
-	Name           string  `json:"name"`
-	Region         string  `json:"region"`
-	Size           string  `json:"size"`
-	MaxConnections int     `json:"max_connections"`
-	Status         *string `json:"status"`
-	CreatedAt      *string `json:"created_at"`
+	ID             string `json:"id"`
+	OrganizationID string `json:"organization_id"`
+	Name           string `json:"name"`
+	Region         string `json:"region"`
+
+	// Type is the Cloud v2 cluster type — `reverb` (Reverb-native). Added
+	// in v0.4.0.
+	Type *string `json:"type,omitempty"`
+
+	Size           string  `json:"size,omitempty"`
+	MaxConnections int     `json:"max_connections,omitempty"`
+	Status         *string `json:"status,omitempty"`
+	CreatedAt      *string `json:"created_at,omitempty"`
+	UpdatedAt      *string `json:"updated_at,omitempty"`
 }
 
 // CreateWebsocketClusterRequest is POST /websocket-servers.
 type CreateWebsocketClusterRequest struct {
-	OrganizationID string `json:"organization_id"`
-	Name           string `json:"name"`
-	Region         string `json:"region"`
-	Size           string `json:"size"`
-	MaxConnections int    `json:"max_connections"`
+	OrganizationID string  `json:"organization_id,omitempty"`
+	Name           string  `json:"name"`
+	Region         string  `json:"region,omitempty"`
+	Type           *string `json:"type,omitempty"`
+	Size           string  `json:"size,omitempty"`
+	MaxConnections int     `json:"max_connections,omitempty"`
 }
 
 // UpdateWebsocketClusterRequest is PATCH /websocket-servers/:id.

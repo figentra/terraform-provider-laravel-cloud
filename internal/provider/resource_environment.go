@@ -9,6 +9,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -18,17 +20,42 @@ import (
 
 // EnvironmentResource manages `laravelcloud_environment` — a per-app env
 // (dev / stg / prd / preview-*) with branch binding + env-vars map.
+//
+// v0.4.0 attribute expansion:
+//   - node_version / build_command / deploy_command — deploy runtime
+//   - uses_push_to_deploy / uses_deploy_hook / uses_octane / uses_hibernation
+//     — deploy toggles
+//   - color — visual identifier in Cloud dashboard
+//   - database_schema_id / cache_id / websocket_application_id — FK
+//     bindings to sibling resources
 type EnvironmentResource struct{ client *api.Client }
 
 // EnvironmentResourceModel maps HCL <-> API DTO.
 type EnvironmentResourceModel struct {
-	ID            types.String `tfsdk:"id"`
-	ApplicationID types.String `tfsdk:"application_id"`
-	Name          types.String `tfsdk:"name"`
-	Branch        types.String `tfsdk:"branch"`
-	Variables     types.Map    `tfsdk:"variables"`
-	InheritsID    types.String `tfsdk:"inherits_id"`
-	CreatedAt     types.String `tfsdk:"created_at"`
+	ID                     types.String `tfsdk:"id"`
+	ApplicationID          types.String `tfsdk:"application_id"`
+	Name                   types.String `tfsdk:"name"`
+	Branch                 types.String `tfsdk:"branch"`
+	Variables              types.Map    `tfsdk:"variables"`
+	InheritsID             types.String `tfsdk:"inherits_id"`
+	DatabaseSchemaID       types.String `tfsdk:"database_schema_id"`
+	CacheID                types.String `tfsdk:"cache_id"`
+	WebsocketApplicationID types.String `tfsdk:"websocket_application_id"`
+
+	// Runtime + build config (v0.4.0)
+	NodeVersion   types.String `tfsdk:"node_version"`
+	BuildCommand  types.String `tfsdk:"build_command"`
+	DeployCommand types.String `tfsdk:"deploy_command"`
+
+	// Deploy toggles (v0.4.0)
+	UsesPushToDeploy types.Bool `tfsdk:"uses_push_to_deploy"`
+	UsesDeployHook   types.Bool `tfsdk:"uses_deploy_hook"`
+	UsesOctane       types.Bool `tfsdk:"uses_octane"`
+	UsesHibernation  types.Bool `tfsdk:"uses_hibernation"`
+
+	Color        types.String `tfsdk:"color"`
+	VanityDomain types.String `tfsdk:"vanity_domain"`
+	CreatedAt    types.String `tfsdk:"created_at"`
 }
 
 // NewEnvironmentResource is the plugin-framework factory.
@@ -40,7 +67,7 @@ func (r *EnvironmentResource) Metadata(_ context.Context, req resource.MetadataR
 
 func (r *EnvironmentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Manages a Cloud environment. One env per branch (`dev` → develop, `stg` → staging, `prd` → main). Env-vars are set as a map; inheritance links two envs so `stg` picks up `dev`'s vars.",
+		MarkdownDescription: "Manages a Cloud environment. One env per branch (`dev` → develop, `stg` → staging, `prd` → main). Every deploy-time knob (node version, build/deploy commands, push-to-deploy toggles, hibernation, octane, color) is expressible via the v0.4.0 attribute expansion.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				MarkdownDescription: "Cloud-assigned environment ID.",
@@ -53,12 +80,12 @@ func (r *EnvironmentResource) Schema(_ context.Context, _ resource.SchemaRequest
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"name": schema.StringAttribute{
-				MarkdownDescription: "Env slug — one of `dev`, `stg`, `prd`, or `preview-*`. Immutable — forces replace.",
+				MarkdownDescription: "Env slug — `dev`, `stg`, `prd`, or `preview-*`. Immutable.",
 				Required:            true,
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"branch": schema.StringAttribute{
-				MarkdownDescription: "Git branch the env auto-deploys from. Nullable when using manual deploys.",
+				MarkdownDescription: "Git branch the env auto-deploys from. Nullable.",
 				Optional:            true,
 			},
 			"variables": schema.MapAttribute{
@@ -70,6 +97,75 @@ func (r *EnvironmentResource) Schema(_ context.Context, _ resource.SchemaRequest
 			"inherits_id": schema.StringAttribute{
 				MarkdownDescription: "Optional parent env ID — this env inherits vars + defaults from the parent.",
 				Optional:            true,
+			},
+			"database_schema_id": schema.StringAttribute{
+				MarkdownDescription: "Database schema this env writes to. Nullable — envs without a DB attach skip this.",
+				Optional:            true,
+			},
+			"cache_id": schema.StringAttribute{
+				MarkdownDescription: "Cache instance bound to this env. Nullable.",
+				Optional:            true,
+			},
+			"websocket_application_id": schema.StringAttribute{
+				MarkdownDescription: "WebSocket app binding for this env. Nullable — envs without WS attach skip this.",
+				Optional:            true,
+			},
+			"node_version": schema.StringAttribute{
+				MarkdownDescription: "Node runtime version for the build — `18`, `20`, `22`, `24`. Added in v0.4.0. Nullable — Cloud picks a default.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"build_command": schema.StringAttribute{
+				MarkdownDescription: "Build command run before deploy. Added in v0.4.0. Nullable — Cloud auto-detects when unset.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"deploy_command": schema.StringAttribute{
+				MarkdownDescription: "Deploy command run after build. Added in v0.4.0. Empty string is valid for static sites.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"uses_push_to_deploy": schema.BoolAttribute{
+				MarkdownDescription: "When true, Cloud auto-deploys on every push to the env's branch. Added in v0.4.0.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(true),
+				PlanModifiers:       []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
+			},
+			"uses_deploy_hook": schema.BoolAttribute{
+				MarkdownDescription: "When true, Cloud exposes a webhook deploy hook for this env. Added in v0.4.0.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+				PlanModifiers:       []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
+			},
+			"uses_octane": schema.BoolAttribute{
+				MarkdownDescription: "When true, Cloud boots the app under Laravel Octane. False for static sites + traditional Laravel. Added in v0.4.0.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+				PlanModifiers:       []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
+			},
+			"uses_hibernation": schema.BoolAttribute{
+				MarkdownDescription: "When true, Cloud hibernates the env after idle. Cost-saving for low-traffic envs. Added in v0.4.0.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+				PlanModifiers:       []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
+			},
+			"color": schema.StringAttribute{
+				MarkdownDescription: "Visual identifier in Cloud dashboard — `green`, `orange`, `red`, `blue`, `purple`. Added in v0.4.0.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"vanity_domain": schema.StringAttribute{
+				MarkdownDescription: "Cloud-generated `<app>-<env>.laravel.cloud` fallback hostname. Read-only. Added in v0.4.0.",
+				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"created_at": schema.StringAttribute{
 				MarkdownDescription: "RFC3339 timestamp of creation.",
@@ -106,6 +202,50 @@ func (r *EnvironmentResource) Create(ctx context.Context, req resource.CreateReq
 	if !plan.InheritsID.IsNull() && !plan.InheritsID.IsUnknown() {
 		v := plan.InheritsID.ValueString()
 		apiReq.InheritsID = &v
+	}
+	if !plan.DatabaseSchemaID.IsNull() && !plan.DatabaseSchemaID.IsUnknown() {
+		v := plan.DatabaseSchemaID.ValueString()
+		apiReq.DatabaseSchemaID = &v
+	}
+	if !plan.CacheID.IsNull() && !plan.CacheID.IsUnknown() {
+		v := plan.CacheID.ValueString()
+		apiReq.CacheID = &v
+	}
+	if !plan.WebsocketApplicationID.IsNull() && !plan.WebsocketApplicationID.IsUnknown() {
+		v := plan.WebsocketApplicationID.ValueString()
+		apiReq.WebsocketApplicationID = &v
+	}
+	if !plan.NodeVersion.IsNull() && !plan.NodeVersion.IsUnknown() {
+		v := plan.NodeVersion.ValueString()
+		apiReq.NodeVersion = &v
+	}
+	if !plan.BuildCommand.IsNull() && !plan.BuildCommand.IsUnknown() {
+		v := plan.BuildCommand.ValueString()
+		apiReq.BuildCommand = &v
+	}
+	if !plan.DeployCommand.IsNull() && !plan.DeployCommand.IsUnknown() {
+		v := plan.DeployCommand.ValueString()
+		apiReq.DeployCommand = &v
+	}
+	if !plan.UsesPushToDeploy.IsNull() && !plan.UsesPushToDeploy.IsUnknown() {
+		v := plan.UsesPushToDeploy.ValueBool()
+		apiReq.UsesPushToDeploy = &v
+	}
+	if !plan.UsesDeployHook.IsNull() && !plan.UsesDeployHook.IsUnknown() {
+		v := plan.UsesDeployHook.ValueBool()
+		apiReq.UsesDeployHook = &v
+	}
+	if !plan.UsesOctane.IsNull() && !plan.UsesOctane.IsUnknown() {
+		v := plan.UsesOctane.ValueBool()
+		apiReq.UsesOctane = &v
+	}
+	if !plan.UsesHibernation.IsNull() && !plan.UsesHibernation.IsUnknown() {
+		v := plan.UsesHibernation.ValueBool()
+		apiReq.UsesHibernation = &v
+	}
+	if !plan.Color.IsNull() && !plan.Color.IsUnknown() {
+		v := plan.Color.ValueString()
+		apiReq.Color = &v
 	}
 	if !plan.Variables.IsNull() && !plan.Variables.IsUnknown() {
 		vars := make(map[string]string, len(plan.Variables.Elements()))
@@ -163,6 +303,50 @@ func (r *EnvironmentResource) Update(ctx context.Context, req resource.UpdateReq
 		v := plan.Branch.ValueString()
 		apiReq.Branch = &v
 	}
+	if !plan.DatabaseSchemaID.IsNull() && !plan.DatabaseSchemaID.IsUnknown() {
+		v := plan.DatabaseSchemaID.ValueString()
+		apiReq.DatabaseSchemaID = &v
+	}
+	if !plan.CacheID.IsNull() && !plan.CacheID.IsUnknown() {
+		v := plan.CacheID.ValueString()
+		apiReq.CacheID = &v
+	}
+	if !plan.WebsocketApplicationID.IsNull() && !plan.WebsocketApplicationID.IsUnknown() {
+		v := plan.WebsocketApplicationID.ValueString()
+		apiReq.WebsocketApplicationID = &v
+	}
+	if !plan.NodeVersion.IsNull() && !plan.NodeVersion.IsUnknown() {
+		v := plan.NodeVersion.ValueString()
+		apiReq.NodeVersion = &v
+	}
+	if !plan.BuildCommand.IsNull() && !plan.BuildCommand.IsUnknown() {
+		v := plan.BuildCommand.ValueString()
+		apiReq.BuildCommand = &v
+	}
+	if !plan.DeployCommand.IsNull() && !plan.DeployCommand.IsUnknown() {
+		v := plan.DeployCommand.ValueString()
+		apiReq.DeployCommand = &v
+	}
+	if !plan.UsesPushToDeploy.IsNull() && !plan.UsesPushToDeploy.IsUnknown() {
+		v := plan.UsesPushToDeploy.ValueBool()
+		apiReq.UsesPushToDeploy = &v
+	}
+	if !plan.UsesDeployHook.IsNull() && !plan.UsesDeployHook.IsUnknown() {
+		v := plan.UsesDeployHook.ValueBool()
+		apiReq.UsesDeployHook = &v
+	}
+	if !plan.UsesOctane.IsNull() && !plan.UsesOctane.IsUnknown() {
+		v := plan.UsesOctane.ValueBool()
+		apiReq.UsesOctane = &v
+	}
+	if !plan.UsesHibernation.IsNull() && !plan.UsesHibernation.IsUnknown() {
+		v := plan.UsesHibernation.ValueBool()
+		apiReq.UsesHibernation = &v
+	}
+	if !plan.Color.IsNull() && !plan.Color.IsUnknown() {
+		v := plan.Color.ValueString()
+		apiReq.Color = &v
+	}
 	if !plan.Variables.IsNull() && !plan.Variables.IsUnknown() {
 		vars := make(map[string]string, len(plan.Variables.Elements()))
 		resp.Diagnostics.Append(plan.Variables.ElementsAs(ctx, &vars, false)...)
@@ -201,28 +385,28 @@ func (r *EnvironmentResource) ImportState(ctx context.Context, req resource.Impo
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
-// applyEnvToModel copies API DTO -> Terraform state model. Diags are
-// appended for any conversion errors so the caller can bail early.
+// applyEnvToModel copies API DTO -> Terraform state model.
 func applyEnvToModel(ctx context.Context, env *api.Environment, m *EnvironmentResourceModel, diags *diag.Diagnostics) {
 	m.ID = types.StringValue(env.ID)
 	m.ApplicationID = types.StringValue(env.ApplicationID)
 	m.Name = types.StringValue(env.Name)
 
-	if env.Branch != nil {
-		m.Branch = types.StringValue(*env.Branch)
-	} else {
-		m.Branch = types.StringNull()
-	}
-	if env.InheritsID != nil {
-		m.InheritsID = types.StringValue(*env.InheritsID)
-	} else {
-		m.InheritsID = types.StringNull()
-	}
-	if env.CreatedAt != nil {
-		m.CreatedAt = types.StringValue(*env.CreatedAt)
-	} else {
-		m.CreatedAt = types.StringNull()
-	}
+	setStringPtr(&m.Branch, env.Branch)
+	setStringPtr(&m.InheritsID, env.InheritsID)
+	setStringPtr(&m.DatabaseSchemaID, env.DatabaseSchemaID)
+	setStringPtr(&m.CacheID, env.CacheID)
+	setStringPtr(&m.WebsocketApplicationID, env.WebsocketApplicationID)
+	setStringPtr(&m.NodeVersion, env.NodeVersion)
+	setStringPtr(&m.BuildCommand, env.BuildCommand)
+	setStringPtr(&m.DeployCommand, env.DeployCommand)
+	setStringPtr(&m.Color, env.Color)
+	setStringPtr(&m.VanityDomain, env.VanityDomain)
+	setStringPtr(&m.CreatedAt, env.CreatedAt)
+
+	setBoolPtr(&m.UsesPushToDeploy, env.UsesPushToDeploy)
+	setBoolPtr(&m.UsesDeployHook, env.UsesDeployHook)
+	setBoolPtr(&m.UsesOctane, env.UsesOctane)
+	setBoolPtr(&m.UsesHibernation, env.UsesHibernation)
 
 	if env.Variables != nil {
 		vars, d := types.MapValueFrom(ctx, types.StringType, env.Variables)
@@ -230,6 +414,25 @@ func applyEnvToModel(ctx context.Context, env *api.Environment, m *EnvironmentRe
 		m.Variables = vars
 	} else {
 		m.Variables = types.MapNull(types.StringType)
+	}
+}
+
+// setStringPtr writes a nullable string API value into a state field.
+// Central helper so every resource applies the same nil-check pattern.
+func setStringPtr(dst *types.String, src *string) {
+	if src != nil {
+		*dst = types.StringValue(*src)
+	} else {
+		*dst = types.StringNull()
+	}
+}
+
+// setBoolPtr writes a nullable bool API value into a state field.
+func setBoolPtr(dst *types.Bool, src *bool) {
+	if src != nil {
+		*dst = types.BoolValue(*src)
+	} else {
+		*dst = types.BoolNull()
 	}
 }
 

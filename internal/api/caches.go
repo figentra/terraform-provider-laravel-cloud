@@ -7,27 +7,54 @@ import (
 )
 
 // Cache is a Valkey/Redis cache instance bound to one or more environments.
+//
+// v0.4.0 attribute expansion: added `type` (valkey/redis switch),
+// `auto_upgrade_enabled`, `is_public`, `eviction_policy` — every knob the
+// Cloud dashboard exposes for cache tuning.
 type Cache struct {
-	ID             string  `json:"id"`
-	OrganizationID string  `json:"organization_id"`
-	Name           string  `json:"name"`
-	Region         string  `json:"region"`
-	Size           string  `json:"size"` // "valkey-pro.1gb", "valkey-pro.5gb", ...
-	Status         *string `json:"status"`
-	CreatedAt      *string `json:"created_at"`
+	ID             string `json:"id"`
+	OrganizationID string `json:"organization_id"`
+	Name           string `json:"name"`
+	Region         string `json:"region"`
+	Size           string `json:"size"` // "valkey-pro.1gb", "valkey-pro.5gb", ...
+
+	// Type selects the cache engine — "valkey" (default) or "redis". Added in v0.4.0.
+	Type *string `json:"type,omitempty"`
+
+	// AutoUpgradeEnabled toggles Cloud-managed engine upgrades. Added in v0.4.0.
+	AutoUpgradeEnabled *bool `json:"auto_upgrade_enabled,omitempty"`
+
+	// IsPublic exposes the cache to non-Cloud clients when true. Added in v0.4.0.
+	IsPublic *bool `json:"is_public,omitempty"`
+
+	// EvictionPolicy is Valkey/Redis eviction — "allkeys-lru", "volatile-lru",
+	// "noeviction", etc. Added in v0.4.0.
+	EvictionPolicy *string `json:"eviction_policy,omitempty"`
+
+	Status    *string `json:"status,omitempty"`
+	CreatedAt *string `json:"created_at,omitempty"`
+	UpdatedAt *string `json:"updated_at,omitempty"`
 }
 
 // CreateCacheRequest is POST /caches.
 type CreateCacheRequest struct {
-	OrganizationID string `json:"organization_id"`
-	Name           string `json:"name"`
-	Region         string `json:"region"`
-	Size           string `json:"size"`
+	OrganizationID     string  `json:"organization_id,omitempty"`
+	Name               string  `json:"name"`
+	Region             string  `json:"region,omitempty"`
+	Size               string  `json:"size"`
+	Type               *string `json:"type,omitempty"`
+	AutoUpgradeEnabled *bool   `json:"auto_upgrade_enabled,omitempty"`
+	IsPublic           *bool   `json:"is_public,omitempty"`
+	EvictionPolicy     *string `json:"eviction_policy,omitempty"`
 }
 
-// UpdateCacheRequest is PATCH /caches/:id — only size is mutable.
+// UpdateCacheRequest is PATCH /caches/:id — size + eviction policy + is_public
+// + auto_upgrade mutable.
 type UpdateCacheRequest struct {
-	Size *string `json:"size,omitempty"`
+	Size               *string `json:"size,omitempty"`
+	AutoUpgradeEnabled *bool   `json:"auto_upgrade_enabled,omitempty"`
+	IsPublic           *bool   `json:"is_public,omitempty"`
+	EvictionPolicy     *string `json:"eviction_policy,omitempty"`
 }
 
 // CreateCache provisions a new cache.
