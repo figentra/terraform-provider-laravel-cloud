@@ -25,28 +25,30 @@ type BucketDataSource struct {
 }
 
 // BucketDataSourceModel mirrors the resource-side model. Only `id` is
-// Required; every other field is Computed.
+// Required; every other field is Computed. As of v0.4.0 the data source
+// surfaces the full expanded attribute set alongside the legacy `mode`.
 type BucketDataSourceModel struct {
-	// ID is the Cloud-assigned bucket ULID. REQUIRED input.
-	ID types.String `tfsdk:"id"`
-
-	// OrganizationID is the owning Cloud organisation.
+	ID             types.String `tfsdk:"id"`
 	OrganizationID types.String `tfsdk:"organization_id"`
+	Name           types.String `tfsdk:"name"`
+	Region         types.String `tfsdk:"region"`
 
-	// Name is the bucket name (globally-unique per Cloud).
-	Name types.String `tfsdk:"name"`
-
-	// Region is the deploy region.
-	Region types.String `tfsdk:"region"`
-
-	// Mode determines the access model — `private` (Cloud-signed URLs
-	// required) or `public` (unauthenticated GET).
+	// Mode is the pre-v0.4.0 access flag.
 	Mode types.String `tfsdk:"mode"`
 
-	// Status is Cloud's lifecycle state.
-	Status types.String `tfsdk:"status"`
+	// Visibility is the v0.4.0 canonical access flag.
+	Visibility types.String `tfsdk:"visibility"`
 
-	// CreatedAt is the RFC3339 timestamp of bucket creation.
+	// Jurisdiction is the geographic zone slug.
+	Jurisdiction types.String `tfsdk:"jurisdiction"`
+
+	// KeyName is the identifier of the auto-generated access key.
+	KeyName types.String `tfsdk:"key_name"`
+
+	// KeyPermission is the permission level of the generated key.
+	KeyPermission types.String `tfsdk:"key_permission"`
+
+	Status    types.String `tfsdk:"status"`
 	CreatedAt types.String `tfsdk:"created_at"`
 }
 
@@ -85,7 +87,24 @@ func (d *BucketDataSource) Schema(ctx context.Context, req datasource.SchemaRequ
 				Computed:            true,
 			},
 			"mode": schema.StringAttribute{
-				MarkdownDescription: "Access mode — `private` or `public`.",
+				MarkdownDescription: "**Deprecated in v0.4.0** — use `visibility`. `private` or `public`.",
+				Computed:            true,
+				DeprecationMessage:  "Use `visibility` instead.",
+			},
+			"visibility": schema.StringAttribute{
+				MarkdownDescription: "Access model — `private` or `public`. Added in v0.4.0.",
+				Computed:            true,
+			},
+			"jurisdiction": schema.StringAttribute{
+				MarkdownDescription: "Geographic zone slug. Added in v0.4.0.",
+				Computed:            true,
+			},
+			"key_name": schema.StringAttribute{
+				MarkdownDescription: "Identifier of the auto-generated access key. Added in v0.4.0.",
+				Computed:            true,
+			},
+			"key_permission": schema.StringAttribute{
+				MarkdownDescription: "Permission level of the auto-generated key. Added in v0.4.0.",
 				Computed:            true,
 			},
 			"status": schema.StringAttribute{
@@ -137,13 +156,45 @@ func (d *BucketDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		return
 	}
 
-	// Hydrate the model. organization_id, name, region, mode are all
-	// non-nullable per the API contract.
 	data.OrganizationID = types.StringValue(bucket.OrganizationID)
 	data.Name = types.StringValue(bucket.Name)
 	data.Region = types.StringValue(bucket.Region)
-	data.Mode = types.StringValue(bucket.Mode)
 
+	// mode↔visibility aliasing — same rule as the resource layer.
+	visibility := bucket.Visibility
+	if visibility == "" {
+		visibility = bucket.Mode
+	}
+	mode := bucket.Mode
+	if mode == "" {
+		mode = bucket.Visibility
+	}
+	if visibility != "" {
+		data.Visibility = types.StringValue(visibility)
+	} else {
+		data.Visibility = types.StringNull()
+	}
+	if mode != "" {
+		data.Mode = types.StringValue(mode)
+	} else {
+		data.Mode = types.StringNull()
+	}
+
+	if bucket.Jurisdiction != nil {
+		data.Jurisdiction = types.StringValue(*bucket.Jurisdiction)
+	} else {
+		data.Jurisdiction = types.StringNull()
+	}
+	if bucket.KeyName != nil {
+		data.KeyName = types.StringValue(*bucket.KeyName)
+	} else {
+		data.KeyName = types.StringNull()
+	}
+	if bucket.KeyPermission != nil {
+		data.KeyPermission = types.StringValue(*bucket.KeyPermission)
+	} else {
+		data.KeyPermission = types.StringNull()
+	}
 	if bucket.Status != nil {
 		data.Status = types.StringValue(*bucket.Status)
 	} else {

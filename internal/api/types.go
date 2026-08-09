@@ -26,18 +26,23 @@ type Application struct {
 	Region                    string     `json:"region"`
 	SourceControlProviderType string     `json:"source_control_provider_type"`
 	Repository                *string    `json:"repository"`
-	ClusterID                 *string    `json:"cluster_id"`
-	SlackChannel              *string    `json:"slack_channel"`
-	AvatarURL                 *string    `json:"avatar_url"`
-	CreatedAt                 *time.Time `json:"created_at"`
-	UpdatedAt                 *time.Time `json:"updated_at"`
+	// RootDirectory is the sub-directory inside the repo Cloud treats as
+	// the build root. Common values: `apps/api`, `services/identity`,
+	// `packages/dashboard`. Nullable — Cloud defaults to the repo root
+	// when unset. Added in v0.4.0.
+	RootDirectory *string    `json:"root_directory,omitempty"`
+	ClusterID     *string    `json:"cluster_id"`
+	SlackChannel  *string    `json:"slack_channel"`
+	AvatarURL     *string    `json:"avatar_url"`
+	CreatedAt     *time.Time `json:"created_at"`
+	UpdatedAt     *time.Time `json:"updated_at"`
 
 	// Included relationships when the caller passes
 	// `?include=organization,environments,defaultEnvironment`. Nil when
 	// the include wasn't requested.
-	Organization       *Organization       `json:"organization,omitempty"`
-	Environments       []Environment       `json:"environments,omitempty"`
-	DefaultEnvironment *Environment        `json:"default_environment,omitempty"`
+	Organization       *Organization `json:"organization,omitempty"`
+	Environments       []Environment `json:"environments,omitempty"`
+	DefaultEnvironment *Environment  `json:"default_environment,omitempty"`
 }
 
 // CreateApplicationRequest is the POST /applications body.
@@ -47,16 +52,20 @@ type CreateApplicationRequest struct {
 	Region                    string  `json:"region"`
 	SourceControlProviderType string  `json:"source_control_provider_type"`
 	Repository                *string `json:"repository,omitempty"`
-	ClusterID                 *string `json:"cluster_id,omitempty"`
-	SlackChannel              *string `json:"slack_channel,omitempty"`
+	// RootDirectory added in v0.4.0. Nullable — omitted when unset so
+	// Cloud defaults to the repo root.
+	RootDirectory *string `json:"root_directory,omitempty"`
+	ClusterID     *string `json:"cluster_id,omitempty"`
+	SlackChannel  *string `json:"slack_channel,omitempty"`
 }
 
 // UpdateApplicationRequest is the PATCH /applications/:id body. Every field
 // is a pointer so operators can partial-update without wiping unset fields.
 type UpdateApplicationRequest struct {
-	Name         *string `json:"name,omitempty"`
-	Repository   *string `json:"repository,omitempty"`
-	SlackChannel *string `json:"slack_channel,omitempty"`
+	Name          *string `json:"name,omitempty"`
+	Repository    *string `json:"repository,omitempty"`
+	RootDirectory *string `json:"root_directory,omitempty"`
+	SlackChannel  *string `json:"slack_channel,omitempty"`
 }
 
 // Organization is Cloud's tenant boundary — a group of applications sharing

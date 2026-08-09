@@ -6,9 +6,47 @@ Version numbers follow [SemVer 2.0](https://semver.org/).
 
 ## [Unreleased]
 
-Phase 3 wires third-party providers (Cloudflare / Doppler / Sentry /
-PagerDuty / Better Stack) into env-root compositions. See the
-[migration plan](../../.kiro/plans/2026-08-07-terraform-pivot-plan.md).
+## [0.4.0] — 2026-08-04 — Cloud v2 attribute expansion
+
+### Added
+
+- `laravelcloud_bucket` — four new attributes matching Cloud's v2 API:
+  - `visibility` — canonical private/public flag; supersedes `mode`.
+  - `jurisdiction` — geographic zone slug (`eu`, `us`, `ap`, ...).
+  - `key_name` — identifier of the auto-generated access key Cloud
+    mints alongside the bucket.
+  - `key_permission` — permission level of the generated key
+    (`read_write` default, `read`, `write`).
+- `laravelcloud_application.root_directory` — sub-directory inside the
+  repo Cloud treats as the build root (`apps/api`, `packages/dashboard`).
+  Consumers previously had to work around this by re-rooting the git
+  repository per app; now expressible per-application via the provider.
+- Data sources (`data.laravelcloud_bucket`, `data.laravelcloud_application`)
+  hydrate every new attribute.
+
+### Changed
+
+- `laravelcloud_bucket.mode` — kept for backward compatibility but
+  formally deprecated. Consumers should migrate to `visibility`. The
+  provider aliases both fields onto the wire so callers using either
+  shape produce byte-identical Cloud API requests.
+- `laravelcloud_bucket.region` — now Optional + Computed. Cloud derives
+  from the organisation when omitted. Previously Required (breaking-ish
+  relaxation — no plan diff for callers still setting it).
+- `laravelcloud_application.organization_id` — now Optional + Computed.
+  Cloud infers from the token when omitted. Previously Required
+  (breaking-ish relaxation — no plan diff for callers still setting it).
+
+### Notes
+
+- v0.4.0 is the FIRST release with the Cloud v2 API surface. Consumers
+  bumping from `~> 0.3` → `~> 0.4` see NO breaking changes; every
+  pre-v0.4 HCL keeps working.
+- The workspace's `figentra/service/laravelcloud` module + sibling
+  static-site module (both at v0.1.3) require `~> 0.4` to consume the
+  new bucket + application attributes.
+
+## [0.3.0] — 2026-08-07 — Phase 2 data-source coverage + provider hygiene
 
 ## [0.3.0] — 2026-08-07 — Phase 2 data-source coverage + provider hygiene
 

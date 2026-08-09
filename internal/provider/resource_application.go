@@ -33,10 +33,14 @@ type ApplicationResourceModel struct {
 	Region                    types.String `tfsdk:"region"`
 	SourceControlProviderType types.String `tfsdk:"source_control_provider_type"`
 	Repository                types.String `tfsdk:"repository"`
-	ClusterID                 types.String `tfsdk:"cluster_id"`
-	SlackChannel              types.String `tfsdk:"slack_channel"`
-	AvatarURL                 types.String `tfsdk:"avatar_url"`
-	CreatedAt                 types.String `tfsdk:"created_at"`
+	// RootDirectory added in v0.4.0. Sub-directory inside the repo Cloud
+	// treats as the build root — e.g. `apps/api`, `packages/dashboard`.
+	// Mutable, nullable.
+	RootDirectory types.String `tfsdk:"root_directory"`
+	ClusterID     types.String `tfsdk:"cluster_id"`
+	SlackChannel  types.String `tfsdk:"slack_channel"`
+	AvatarURL     types.String `tfsdk:"avatar_url"`
+	CreatedAt     types.String `tfsdk:"created_at"`
 }
 
 // NewApplicationResource is the plugin-framework factory registered from
@@ -82,10 +86,15 @@ func (r *ApplicationResource) Schema(ctx context.Context, req resource.SchemaReq
 			},
 			"organization_id": schema.StringAttribute{
 				MarkdownDescription: "The organisation this application belongs to. " +
-					"Immutable post-create — changing this forces a replace.",
-				Required: true,
+					"Immutable post-create — changing this forces a replace. " +
+					"Optional when the provider token is scoped to a single " +
+					"organisation (Cloud infers the org from the token); " +
+					"required otherwise. As of v0.4.0.",
+				Optional: true,
+				Computed: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
 			"name": schema.StringAttribute{
@@ -121,6 +130,13 @@ func (r *ApplicationResource) Schema(ctx context.Context, req resource.SchemaReq
 			"repository": schema.StringAttribute{
 				MarkdownDescription: "Repository identifier in `owner/repo` shape. " +
 					"Nullable — leave unset for a manually-deployed application.",
+				Optional: true,
+			},
+			"root_directory": schema.StringAttribute{
+				MarkdownDescription: "Sub-directory inside the repo Cloud treats as " +
+					"the build root — e.g. `apps/api`, `services/identity`, " +
+					"`packages/dashboard`. Nullable — Cloud defaults to the repo " +
+					"root when unset. Added in v0.4.0.",
 				Optional: true,
 			},
 			"cluster_id": schema.StringAttribute{
@@ -186,15 +202,21 @@ func (r *ApplicationResource) Create(ctx context.Context, req resource.CreateReq
 	})
 
 	apiReq := api.CreateApplicationRequest{
-		OrganizationID:            plan.OrganizationID.ValueString(),
 		Name:                      plan.Name.ValueString(),
 		Region:                    plan.Region.ValueString(),
 		SourceControlProviderType: plan.SourceControlProviderType.ValueString(),
 	}
 
+	if !plan.OrganizationID.IsNull() && !plan.OrganizationID.IsUnknown() {
+		apiReq.OrganizationID = plan.OrganizationID.ValueString()
+	}
 	if !plan.Repository.IsNull() && !plan.Repository.IsUnknown() {
 		v := plan.Repository.ValueString()
 		apiReq.Repository = &v
+	}
+	if !plan.RootDirectory.IsNull() && !plan.RootDirectory.IsUnknown() {
+		v := plan.RootDirectory.ValueString()
+		apiReq.RootDirectory = &v
 	}
 	if !plan.ClusterID.IsNull() && !plan.ClusterID.IsUnknown() {
 		v := plan.ClusterID.ValueString()
@@ -279,6 +301,10 @@ func (r *ApplicationResource) Update(ctx context.Context, req resource.UpdateReq
 		v := plan.Repository.ValueString()
 		apiReq.Repository = &v
 	}
+	if !plan.RootDirectory.IsNull() && !plan.RootDirectory.IsUnknown() {
+		v := plan.RootDirectory.ValueString()
+		apiReq.RootDirectory = &v
+	}
 	if !plan.SlackChannel.IsNull() && !plan.SlackChannel.IsUnknown() {
 		v := plan.SlackChannel.ValueString()
 		apiReq.SlackChannel = &v
@@ -353,6 +379,12 @@ func applyAPIToModel(app *api.Application, model *ApplicationResourceModel) {
 		model.Repository = types.StringValue(*app.Repository)
 	} else {
 		model.Repository = types.StringNull()
+	}
+
+	if app.RootDirectory != nil {
+		model.RootDirectory = types.StringValue(*app.RootDirectory)
+	} else {
+		model.RootDirectory = types.StringNull()
 	}
 
 	if app.ClusterID != nil {

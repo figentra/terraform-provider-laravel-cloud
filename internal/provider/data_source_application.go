@@ -36,6 +36,7 @@ type ApplicationDataSourceModel struct {
 	Region                    types.String `tfsdk:"region"`
 	SourceControlProviderType types.String `tfsdk:"source_control_provider_type"`
 	Repository                types.String `tfsdk:"repository"`
+	RootDirectory             types.String `tfsdk:"root_directory"`
 	ClusterID                 types.String `tfsdk:"cluster_id"`
 	SlackChannel              types.String `tfsdk:"slack_channel"`
 	AvatarURL                 types.String `tfsdk:"avatar_url"`
@@ -89,6 +90,10 @@ func (d *ApplicationDataSource) Schema(ctx context.Context, req datasource.Schem
 			},
 			"repository": schema.StringAttribute{
 				MarkdownDescription: "Repository identifier in `owner/repo` shape.",
+				Computed:            true,
+			},
+			"root_directory": schema.StringAttribute{
+				MarkdownDescription: "Sub-directory inside the repo Cloud treats as the build root. Added in v0.4.0.",
 				Computed:            true,
 			},
 			"cluster_id": schema.StringAttribute{
@@ -161,6 +166,11 @@ func (d *ApplicationDataSource) Read(ctx context.Context, req datasource.ReadReq
 		data.Repository = types.StringValue(*app.Repository)
 	} else {
 		data.Repository = types.StringNull()
+	}
+	if app.RootDirectory != nil {
+		data.RootDirectory = types.StringValue(*app.RootDirectory)
+	} else {
+		data.RootDirectory = types.StringNull()
 	}
 	if app.ClusterID != nil {
 		data.ClusterID = types.StringValue(*app.ClusterID)
