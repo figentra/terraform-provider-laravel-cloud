@@ -185,7 +185,27 @@ func (r *BucketResource) Create(ctx context.Context, req resource.CreateRequest,
 		resp.Diagnostics.AddError("Failed to create bucket", err.Error())
 		return
 	}
+
+	// Preserve request-only fields the Cloud bucket response omits.
+	// `key_name` + `key_permission` are metadata on the ACCESS KEY that
+	// gets minted alongside the bucket; Cloud's bucket GET returns only
+	// bucket-scoped attributes. Save the plan values before hydrating
+	// so the state matches what the operator declared.
+	planKeyName := plan.KeyName
+	planKeyPermission := plan.KeyPermission
+
 	applyBucketToModel(bucket, &plan)
+
+	// Restore the plan-side values so terraform's post-apply drift
+	// check ("provider produced inconsistent result") passes. Both
+	// fields are otherwise `known after apply` → `null` mismatches.
+	if !planKeyName.IsNull() && !planKeyName.IsUnknown() && plan.KeyName.IsNull() {
+		plan.KeyName = planKeyName
+	}
+	if !planKeyPermission.IsNull() && !planKeyPermission.IsUnknown() && plan.KeyPermission.IsNull() {
+		plan.KeyPermission = planKeyPermission
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -205,7 +225,22 @@ func (r *BucketResource) Read(ctx context.Context, req resource.ReadRequest, res
 		resp.Diagnostics.AddError("Failed to read bucket", err.Error())
 		return
 	}
+
+	// Preserve request-only fields the Cloud bucket response omits
+	// (see Create's comment). Save before applyBucketToModel; restore
+	// after when the API returned null.
+	stateKeyName := state.KeyName
+	stateKeyPermission := state.KeyPermission
+
 	applyBucketToModel(bucket, &state)
+
+	if !stateKeyName.IsNull() && state.KeyName.IsNull() {
+		state.KeyName = stateKeyName
+	}
+	if !stateKeyPermission.IsNull() && state.KeyPermission.IsNull() {
+		state.KeyPermission = stateKeyPermission
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
