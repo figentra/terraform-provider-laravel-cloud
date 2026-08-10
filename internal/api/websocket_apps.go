@@ -65,7 +65,12 @@ func (c *Client) GetWebsocketApp(ctx context.Context, id string) (*WebsocketApp,
 		return nil, errors.New("app id is required")
 	}
 	var env Envelope[WebsocketApp]
-	if err := c.do(ctx, "GET", "/websocket-apps/"+id, nil, &env); err != nil {
+	// Cloud exposes ws-apps under `/websocket-applications/<id>` for
+	// singleton reads (verified empirically 2026-08-10). The plural
+	// `/websocket-apps/<id>` path returns 401 Unauthenticated — a
+	// 404-in-disguise from Laravel's default auth-middleware
+	// response.
+	if err := c.do(ctx, "GET", "/websocket-applications/"+id, nil, &env); err != nil {
 		return nil, err
 	}
 	return &env.Data, nil
@@ -77,7 +82,7 @@ func (c *Client) UpdateWebsocketApp(ctx context.Context, id string, req UpdateWe
 		return nil, errors.New("app id is required")
 	}
 	var env Envelope[WebsocketApp]
-	if err := c.do(ctx, "PATCH", "/websocket-apps/"+id, req, &env); err != nil {
+	if err := c.do(ctx, "PATCH", "/websocket-applications/"+id, req, &env); err != nil {
 		return nil, fmt.Errorf("update websocket app: %w", err)
 	}
 	return &env.Data, nil
@@ -88,7 +93,7 @@ func (c *Client) DeleteWebsocketApp(ctx context.Context, id string) error {
 	if id == "" {
 		return errors.New("app id is required")
 	}
-	if err := c.do(ctx, "DELETE", "/websocket-apps/"+id, nil, nil); err != nil {
+	if err := c.do(ctx, "DELETE", "/websocket-applications/"+id, nil, nil); err != nil {
 		return fmt.Errorf("delete websocket app: %w", err)
 	}
 	return nil

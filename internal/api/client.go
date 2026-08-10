@@ -116,10 +116,38 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 			if out == nil || len(respBody) == 0 {
 				return nil
 			}
-			// Cloud has a known quirk where some 204 responses ship an
-			// HTML body via a CDN edge. Detect + treat as empty.
+			// Cloud has an intermittent auth-redirect fluke where a
+			// request to /api/<path> gets served the marketing SPA
+			// (HTML body) instead of the API JSON. This shows up as
+			// a 2xx response with `<!DOCTYPE html>...` content.
+			//
+			// The previous heuristic here treated HTML-body 2xx as
+			// an empty success (`return nil`), silently accepting an
+			// unusable response. On Create endpoints this left the
+			// provider with a zero-valued resource ID + no downstream
+			// visibility — the resource looked "created" in state
+			// but every dependent child failed with "application id
+			// is required".
+			//
+			// Correct handling: retry the request (auth-redirect is
+			// transient — a second attempt usually hits the API
+			// route correctly). If HTML persists across every
+			// attempt, surface as a hard error so upstream sees the
+			// substrate is broken.
 			if bytes.HasPrefix(bytes.TrimSpace(respBody), []byte("<")) {
-				return nil
+				if attempt < maxAttempts {
+					lastErr = fmt.Errorf(
+						"cloud API returned HTML body on %s %s (auth-redirect fluke) — retry %d/%d",
+						method, path, attempt, maxAttempts,
+					)
+					time.Sleep(backoff(attempt))
+					continue
+				}
+				return fmt.Errorf(
+					"cloud API returned HTML on %s %s after %d attempts "+
+						"(auth-redirect fluke persisted; response start: %q)",
+					method, path, maxAttempts, string(respBody[:min(len(respBody), 200)]),
+				)
 			}
 			if err := json.Unmarshal(respBody, out); err != nil {
 				return fmt.Errorf("unmarshal response: %w (body: %s)", err, respBody)
