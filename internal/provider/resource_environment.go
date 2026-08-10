@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -13,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/figentra/terraform-provider-laravel-cloud/internal/api"
@@ -157,10 +159,17 @@ func (r *EnvironmentResource) Schema(_ context.Context, _ resource.SchemaRequest
 				PlanModifiers:       []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
 			},
 			"color": schema.StringAttribute{
-				MarkdownDescription: "Visual identifier in Cloud dashboard — `green`, `orange`, `red`, `blue`, `purple`. Added in v0.4.0.",
-				Optional:            true,
-				Computed:            true,
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				MarkdownDescription: "Visual identifier in the Cloud dashboard chip. One of: " +
+					"`gray`, `slate`, `zinc`, `red`, `rose`, `orange`, `amber`, `yellow`, " +
+					"`lime`, `green`, `emerald`, `teal`, `cyan`, `sky`, `blue`, `indigo`, " +
+					"`violet`, `purple`, `fuchsia`, `pink`. Cloud picks a default when unset. " +
+					"Validated enum added in v0.6.0.",
+				Optional: true,
+				Computed: true,
+				Validators: []validator.String{
+					stringvalidator.OneOf(api.ValidColors...),
+				},
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"vanity_domain": schema.StringAttribute{
 				MarkdownDescription: "Cloud-generated `<app>-<env>.laravel.cloud` fallback hostname. Read-only. Added in v0.4.0.",

@@ -8,6 +8,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -41,6 +43,13 @@ type ApplicationResourceModel struct {
 	SlackChannel  types.String `tfsdk:"slack_channel"`
 	AvatarURL     types.String `tfsdk:"avatar_url"`
 	CreatedAt     types.String `tfsdk:"created_at"`
+	// DeleteDefaultEnvironment (v0.6.0) — Cloud auto-creates a
+	// `production` environment on every `POST /applications`. The
+	// provider deletes it after create when this flag is true (default),
+	// leaving a clean slate for terraform-managed `laravelcloud_environment`
+	// resources to populate. One-shot flag — only honored at Create time;
+	// mutating it post-create is a no-op (documented on the schema).
+	DeleteDefaultEnvironment types.Bool `tfsdk:"delete_default_environment"`
 }
 
 // NewApplicationResource is the plugin-framework factory registered from
@@ -159,6 +168,24 @@ func (r *ApplicationResource) Schema(ctx context.Context, req resource.SchemaReq
 					"Read-only.",
 				Computed: true,
 			},
+			"delete_default_environment": schema.BoolAttribute{
+				MarkdownDescription: "Whether the provider deletes the auto-created " +
+					"default `production` environment Cloud provisions on every " +
+					"`POST /applications`. Defaults to `true` — the workspace convention " +
+					"names environments `dev` / `stg` / `prd` via separate " +
+					"`laravelcloud_environment` resources, so the auto-created stub is " +
+					"redundant. Set to `false` to keep it (e.g. when one of your " +
+					"terraform-managed envs is literally named `production` and you want " +
+					"to adopt the auto-created one via import rather than recreate). " +
+					"One-shot flag — honored only at Create time; mutating it later has " +
+					"no effect on already-created applications. Added in v0.6.0.",
+				Optional: true,
+				Computed: true,
+				Default:  booldefault.StaticBool(true),
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
+			},
 		},
 	}
 }
@@ -235,6 +262,53 @@ func (r *ApplicationResource) Create(ctx context.Context, req resource.CreateReq
 				"Original error: "+err.Error(),
 		)
 		return
+	}
+
+	// ── Auto-cleanup: delete Cloud's default `production` env ──────
+	//
+	// Cloud auto-provisions a `production` environment on every
+	// `POST /applications` — it's a placeholder with no branch, no
+	// vars, no bindings. The workspace convention creates envs via
+	// separate `laravelcloud_environment` resources named
+	// `dev` / `stg` / `prd`, so the auto-created stub is redundant
+	// AND surfaces as a "Never deployed" clutter row in the Cloud
+	// dashboard.
+	//
+	// When `delete_default_environment` is true (the default), we
+	// iterate every env returned in the create response and delete
+	// each one. Failures are surfaced as warnings, NOT errors — the
+	// application create itself succeeded, and the auto-created env
+	// can be manually removed later without terraform intervention.
+	deleteDefaults := true
+	if !plan.DeleteDefaultEnvironment.IsNull() && !plan.DeleteDefaultEnvironment.IsUnknown() {
+		deleteDefaults = plan.DeleteDefaultEnvironment.ValueBool()
+	}
+	if deleteDefaults && len(app.Environments) > 0 {
+		for _, env := range app.Environments {
+			tflog.Info(ctx, "Deleting Cloud-auto-created default environment", map[string]any{
+				"application_id": app.ID,
+				"environment_id": env.ID,
+				"env_name":       env.Name,
+			})
+			if delErr := r.client.DeleteEnvironment(ctx, env.ID); delErr != nil {
+				resp.Diagnostics.AddWarning(
+					"Failed to delete auto-created default environment",
+					fmt.Sprintf(
+						"Cloud auto-created the `%s` environment on application "+
+							"`%s` (id=%s), but the follow-up DELETE call failed: %s. "+
+							"The application itself is created. Remove the env manually "+
+							"in the Cloud dashboard, or set `delete_default_environment = "+
+							"false` and adopt it via import.",
+						env.Name, app.Name, env.ID, delErr.Error(),
+					),
+				)
+			}
+		}
+		// The local Environments slice is now stale — Cloud has fewer
+		// (or zero) envs on this application. Zero it so any downstream
+		// reader on the same response doesn't see the deleted envs.
+		app.Environments = nil
+		app.DefaultEnvironment = nil
 	}
 
 	// Hydrate plan with computed values.

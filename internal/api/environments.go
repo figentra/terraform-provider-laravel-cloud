@@ -6,6 +6,55 @@ import (
 	"fmt"
 )
 
+// EnvironmentColor is the canonical enum of colors Cloud accepts for the
+// per-environment visual identifier (dashboard chip color). The set is
+// aligned with the Cloud dashboard's color picker menu — 20 values covering
+// warm, cool, and neutral hues. Consumers pin one of these constants to
+// avoid drift with Cloud's server-side validator.
+//
+// If Cloud accepts additional colors, add them here; the provider's
+// `laravelcloud_environment.color` `stringvalidator.OneOf(ValidColors...)`
+// rejects unknown values at plan-time.
+type EnvironmentColor string
+
+const (
+	ColorGray    EnvironmentColor = "gray"
+	ColorSlate   EnvironmentColor = "slate"
+	ColorZinc    EnvironmentColor = "zinc"
+	ColorRed     EnvironmentColor = "red"
+	ColorRose    EnvironmentColor = "rose"
+	ColorOrange  EnvironmentColor = "orange"
+	ColorAmber   EnvironmentColor = "amber"
+	ColorYellow  EnvironmentColor = "yellow"
+	ColorLime    EnvironmentColor = "lime"
+	ColorGreen   EnvironmentColor = "green"
+	ColorEmerald EnvironmentColor = "emerald"
+	ColorTeal    EnvironmentColor = "teal"
+	ColorCyan    EnvironmentColor = "cyan"
+	ColorSky     EnvironmentColor = "sky"
+	ColorBlue    EnvironmentColor = "blue"
+	ColorIndigo  EnvironmentColor = "indigo"
+	ColorViolet  EnvironmentColor = "violet"
+	ColorPurple  EnvironmentColor = "purple"
+	ColorFuchsia EnvironmentColor = "fuchsia"
+	ColorPink    EnvironmentColor = "pink"
+)
+
+// ValidColors is every EnvironmentColor as a bare string, in the order
+// Cloud's color picker displays. Consumed by the resource schema's
+// `stringvalidator.OneOf(...)` so plan-time validation names every valid
+// value in a stable order.
+var ValidColors = []string{
+	string(ColorGray), string(ColorSlate), string(ColorZinc),
+	string(ColorRed), string(ColorRose),
+	string(ColorOrange), string(ColorAmber),
+	string(ColorYellow), string(ColorLime),
+	string(ColorGreen), string(ColorEmerald), string(ColorTeal),
+	string(ColorCyan), string(ColorSky), string(ColorBlue),
+	string(ColorIndigo), string(ColorViolet), string(ColorPurple),
+	string(ColorFuchsia), string(ColorPink),
+}
+
 // Environment represents a Cloud application environment (dev / stg / prd
 // or a per-PR preview-*). Every environment carries a branch binding, an
 // env-var map, and links to database schema / cache / websocket app /
