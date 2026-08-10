@@ -266,3 +266,25 @@ func (e *APIError) IsSchemasAttached() bool {
 		strings.Contains(msg, "schemas attached and cannot") ||
 		strings.Contains(msg, "cannot be deleted") && strings.Contains(msg, "schema")
 }
+
+// IsKeysAttached returns true when Cloud rejected a bucket DELETE
+// because it still has access keys attached. Sibling of
+// `IsSchemasAttached` — Cloud rejects with 422 on both, so we need a
+// distinct predicate to route the two cascade behaviours correctly
+// (drain schemas vs drain keys).
+//
+// Cloud's canonical message: "The filesystem has keys attached and
+// cannot be deleted. Please delete all keys first." — the "filesystem"
+// wording matches Cloud's internal bucket type name (bucket IDs carry
+// the `fls-` prefix on the wire).
+func (e *APIError) IsKeysAttached() bool {
+	if e.StatusCode != http.StatusUnprocessableEntity {
+		return false
+	}
+	msg := strings.ToLower(e.Message)
+	// Match Cloud's canonical message + a few near-variants.
+	return strings.Contains(msg, "has keys attached") ||
+		strings.Contains(msg, "keys attached and cannot") ||
+		strings.Contains(msg, "delete all keys first") ||
+		strings.Contains(msg, "cannot be deleted") && strings.Contains(msg, "key")
+}

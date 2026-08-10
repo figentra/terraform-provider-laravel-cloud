@@ -318,50 +318,42 @@ func (r *EnvironmentNetworkSettingsResource) Update(ctx context.Context, req res
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-// Delete PATCHes the env back to permissive defaults. The environment
-// itself is untouched — we just release Terraform's ownership of the
-// network settings.
-func (r *EnvironmentNetworkSettingsResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var state EnvironmentNetworkSettingsResourceModel
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// Reset to Cloud's most permissive enum values (SDK canonical).
-	// The SDK enums (verified 2026-08-10) accept: frame=deny/sameorigin/all,
-	// content_type=nosniff/none, robots_tag="index, follow"/"noindex, nofollow",
-	// firewall_rate_limit_level=challenge/throttle/ban, cache=default/bypass.
-	// Previous placeholder values (`disabled`, `all`) surfaced as HTTP 422.
-	defaultStrategy := "default"
-	frame := "all"
-	contentType := "none"
-	robots := "index, follow"
-	rateLimit := "throttle"
-	underAttack := false
-
-	patch := api.UpdateEnvironmentNetworkSettingsRequest{
-		CacheStrategy:              &defaultStrategy,
-		ResponseHeadersFrame:       &frame,
-		ResponseHeadersContentType: &contentType,
-		ResponseHeadersRobotsTag:   &robots,
-		FirewallRateLimitLevel:     &rateLimit,
-		FirewallUnderAttackMode:    &underAttack,
-		// HSTS reset: nil pointer → Cloud drops the header.
-		ResponseHeadersHsts: nil,
-	}
-
-	envID := state.EnvironmentID.ValueString()
-	if err := r.client.UpdateEnvironmentNetworkSettings(ctx, envID, patch); err != nil {
-		// Fail-soft — the env may already be gone, or Cloud may have
-		// tightened defaults. Emit a warning rather than blocking the
-		// destroy plan.
-		resp.Diagnostics.AddWarning(
-			"Failed to reset network settings on delete",
-			"Cloud API returned an error while resetting the env back to "+
-				"defaults. Original error: "+err.Error(),
-		)
-	}
+// Delete releases terraform's ownership of the network settings
+// WITHOUT patching Cloud. The environment itself is untouched.
+//
+// Historical context: v0.5.0 → v0.5.4 tried to PATCH the env back to
+// "permissive defaults" on destroy — first with prose values like
+// `"disabled"`, then with `all` / `none` / `throttle` after a
+// re-check against the Cloud PHP SDK enums. Both attempts surfaced
+// as HTTP 422 warnings during `terraform destroy` because Cloud's
+// runtime accepts a NARROWER enum set than either the schema prose
+// OR the SDK constant table advertised — the exact accepted values
+// drift across Cloud API versions and aren't reliably discoverable
+// from the wire.
+//
+// Correct destroy behaviour: DON'T touch Cloud. Two scenarios drive
+// destroy on this resource:
+//
+//  1. The env is being destroyed too (workspace-wide `destroy-all`)
+//     — the sibling `laravelcloud_environment` resource's Delete
+//     fires shortly after and takes every setting with it. A reset
+//     PATCH here is pointless work at best, noise at worst.
+//
+//  2. The resource is being removed from state while the env stays
+//     alive (rare — deliberate operator action) — the operator has
+//     an existing set of network values they DELIBERATELY authored
+//     via Cloud UI or a prior terraform run; wiping them to
+//     "permissive defaults" would silently weaken the env's
+//     security posture. Better to leave every field at its current
+//     value and let the operator author fresh values on next apply.
+//
+// Both scenarios prefer state-only release. Matches the EAS
+// providers' "remove from state, don't touch upstream" pattern for
+// resources Cloud won't let us reset safely.
+func (r *EnvironmentNetworkSettingsResource) Delete(_ context.Context, _ resource.DeleteRequest, _ *resource.DeleteResponse) {
+	// Intentionally no-op — see docblock. State-only release; the
+	// plugin-framework's default post-Delete behaviour removes the
+	// resource from state.
 }
 
 func (r *EnvironmentNetworkSettingsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
