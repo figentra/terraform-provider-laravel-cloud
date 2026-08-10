@@ -177,6 +177,14 @@ func (p *LaravelCloudProvider) Resources(ctx context.Context) []func() resource.
 		NewWebsocketClusterResource,
 		NewWebsocketAppResource,
 		NewDomainResource,
+		// v0.5.0 — deploy runtime primitives
+		NewDeploymentResource,
+		NewInstanceResource,
+		NewBackgroundProcessResource,
+		NewEnvironmentNetworkSettingsResource,
+		NewDomainVerifyResource,
+		NewDatabaseSnapshotResource,
+		NewCommandResource,
 	}
 }
 

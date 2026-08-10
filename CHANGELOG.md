@@ -6,6 +6,102 @@ Version numbers follow [SemVer 2.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-08-11 — deploy runtime primitives (BREAKING minor: 7 new resources)
+
+Wire-format-safe minor bump — every existing resource keeps its current
+schema + API surface. Seven brand-new resource types unlock the actual
+Cloud runtime (deployments, compute sizing, background processes, network
+hardening, domain verification, DB snapshots, one-shot commands) that the
+v0.4.x provider only scaffolded.
+
+### Added
+
+- **`laravelcloud_deployment`** — Trigger deploys from Terraform.
+  Cloud does NOT auto-deploy on env creation; this resource fires
+  `POST /environments/:id/deployments` and (optionally) polls for
+  terminal status. `redeploy_trigger` attribute forces re-deploy
+  when it changes (`timestamp()`, `-var="redeploy_trigger=$(date +%s)"`).
+  Failed deploys emit a diagnostic with `deployment_id`, terminal
+  status, and failure reason so operators can inspect the Cloud
+  dashboard. Retry contract: bounded 1200-second poll (bumpable via
+  `timeout_seconds`), 5s cadence, `wait_for_completion = false` for
+  fire-and-forget. Every field except `wait_for_completion` and
+  `timeout_seconds` carries RequiresReplace so each terraform apply
+  can only create a fresh deployment record — matches Cloud's own
+  semantics (deployments are immutable rows).
+
+- **`laravelcloud_instance`** — Compute-unit sizing + Octane + autoscale
+  - hibernation. An environment carries at least one instance
+    (`type = app`) plus optionally `queue` / `service` / `serverless_queue`
+    instances for Horizon workers, custom daemons, and serverless jobs.
+    Every InstanceSize slug from the SDK enum is accepted
+    (`flex.g-1vcpu-512mb` through `dedicated.m-8vcpu-64gb`).
+    Toggleable knobs: `uses_octane`, `uses_scheduler`, `uses_sleep_mode`
+    (Cloud scale-to-zero), `uses_inertia_ssr`. Autoscale via
+    `scaling_type` + `min_replicas` + `max_replicas` + optional CPU/mem
+    thresholds. Fixes the "Cloud picks 512MB default and OOMs under
+    load" trap.
+
+- **`laravelcloud_background_process`** — Horizon workers + custom
+  daemons on an instance. Two shapes: `type = "worker"` (Laravel
+  queue worker with `config` block carrying `connection`, `queue`,
+  `tries`, `backoff`, `sleep`, `rest`, `timeout`, `force`) or
+  `type = "custom"` (any long-lived process; `command` REQUIRED).
+  Fixes the "app deploys but no jobs run" trap.
+
+- **`laravelcloud_environment_network_settings`** — Env-scoped HSTS
+  - rate-limit tier + robots_tag + X-Frame-Options + X-Content-Type
+  - firewall under-attack mode. Separate resource so network hardening
+    has its own lifecycle (typical pattern: dev = noindex + rate_limit
+    none + no HSTS, stg = noindex + rate_limit low + HSTS 1yr, prd =
+    index + rate_limit high + HSTS 2yr + preload + include_subdomains).
+    Delete PATCHes the env back to Cloud's permissive defaults; the
+    environment itself is untouched. On the wire this hits
+    `PATCH /environments/:id` with a disjoint field set from
+    `laravelcloud_environment`, so both resources can co-manage the
+    same env without conflict.
+
+- **`laravelcloud_domain_verify`** — Fire `POST /domains/:id/verify`
+  as an explicit Terraform action. Attach a `depends_on` chain from
+  the DNS record so verification only fires after propagation. Bump
+  `verify_trigger` to re-run. Fixes the "domain stuck on Not connected
+  until Cloud auto-polls" wait.
+
+- **`laravelcloud_database_snapshot`** — Manual snapshots on a database
+  cluster. Cloud's automated snapshots are managed by Cloud; this
+  resource manages operator-initiated snapshots (pre-migration safety
+  nets, DR test artifacts). Cluster-scoped: import path is
+  `<cluster_id>:<snapshot_id>`.
+
+- **`laravelcloud_command`** — One-shot artisan/shell commands in an
+  environment (`migrate --force`, `db:seed --class=X`,
+  `cache:clear`, `tinker`). Bump `rerun_trigger` to re-run.
+  Non-happy terminal exits emit a diagnostic with captured
+  stdout+stderr (capped at 4KB in the diagnostic; full output stays
+  in state). Delete is a no-op — Cloud retains the command record
+  for history.
+
+### Wire additions
+
+- New API client methods: `CreateDeployment`, `GetDeployment`,
+  `PollDeployment`, `CreateInstance`, `GetInstance`,
+  `UpdateInstance`, `DeleteInstance`, `CreateBackgroundProcess`,
+  `GetBackgroundProcess`, `UpdateBackgroundProcess`,
+  `DeleteBackgroundProcess`, `GetEnvironmentNetworkSettings`,
+  `UpdateEnvironmentNetworkSettings`, `VerifyDomain`,
+  `CreateDatabaseSnapshot`, `GetDatabaseSnapshot`,
+  `DeleteDatabaseSnapshot`, `ListDatabaseSnapshots`, `RunCommand`,
+  `GetCommand`, `PollCommand`.
+- New response structs: `Deployment`, `Instance`, `BackgroundProcess`
+  (+ nested `BackgroundProcessConfig`), `EnvironmentNetworkSettings`
+  (+ nested `HstsSettings`), `DatabaseSnapshot`, `Command`.
+
+### Semver rationale
+
+`0.5.0` is a MINOR bump under 0.x semver (no breaking changes to
+existing resources). Consumers on `~> 0.4` upgrade freely; the seven
+new resources are additive.
+
 ## [0.4.10] — 2026-08-11 — cluster-delete race retry
 
 ### Fixed
