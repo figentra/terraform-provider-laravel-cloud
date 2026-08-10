@@ -6,6 +6,26 @@ Version numbers follow [SemVer 2.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-08-10 — JSON:API envelope flatten
+
+### Fixed
+
+- **CRITICAL — every resource with computed attributes was reading null.**
+  `Envelope[T].UnmarshalJSON` was treating Cloud's JSON:API response wrapper
+  (`{"data": {"id": …, "type": …, "attributes": {…}}}`) as flat REST, so every
+  Read/Create call left `.name`, `.region`, `.size`, `.type`, `.is_public`,
+  `.max_connections`, etc. at Go zero values (`""` / `nil`). Terraform's
+  post-apply consistency check flagged this as "Provider produced inconsistent
+  result after apply". Affected every `laravelcloud_*` resource create/read.
+- Custom `Envelope.UnmarshalJSON` now transparently flattens the JSON:API
+  envelope: hoists `data.attributes.*` up + copies `data.id`, then unmarshals
+  into `T`. The JSON:API resource-type discriminator (`data.type = "caches"`)
+  is deliberately dropped so `Cache.Type` reads the engine value
+  (`"laravel_valkey"`) from `data.attributes.type` instead of the discriminator.
+- Supports singleton (`data` is object) + list (`data` is array) responses.
+- Flat REST responses (no `attributes` sub-object) pass through unchanged for
+  forward compat.
+
 ## [0.4.0] — 2026-08-04 — Cloud v2 attribute expansion
 
 ### Added

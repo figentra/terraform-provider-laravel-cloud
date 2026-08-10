@@ -11,7 +11,10 @@
 // Content-Type: application/json on requests + responses
 package api
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Application represents a Laravel Cloud application record — the top-level
 // deploy unit under an organisation. One Cloud app maps to one workspace
@@ -84,10 +87,132 @@ type Organization struct {
 // Envelope is Cloud's JSON:API-ish response wrapper. Every singleton read
 // returns `{"data": <resource>, "included": [...]}` — the `Data` field
 // unmarshals into a typed pointer via `json.Unmarshal`.
+//
+// UnmarshalJSON below transparently flattens JSON:API resource objects of
+// the shape `{"id": ..., "type": ..., "attributes": {...}}` into the flat
+// shape the downstream `T` structs expect. See §Wire format handling for
+// the full contract.
 type Envelope[T any] struct {
 	Data     T                `json:"data"`
 	Included []map[string]any `json:"included,omitempty"`
 	Meta     map[string]any   `json:"meta,omitempty"`
+}
+
+// UnmarshalJSON handles the Cloud API's JSON:API-style envelope where the
+// actual resource attributes live under `data.attributes.*` and the ID sits
+// at `data.id`. Given a payload of the shape:
+//
+//	{"data": {"id": "cache-…", "type": "caches",
+//	          "attributes": {"name": "…", "size": "…", …}}}
+//
+// this method hoists `data.attributes.*` fields up + copies `data.id`, then
+// unmarshals the resulting flat object into `T`. When the response is
+// already flat REST (`data` contains resource fields directly without an
+// `attributes` sub-object), the payload passes through unchanged so this
+// wrapper is safe to use across every endpoint.
+//
+// Supports both singleton (`data` is object) and list (`data` is array)
+// responses.
+//
+// The JSON:API resource-type discriminator (`data.type = "caches"`, etc.)
+// is deliberately dropped — several Cloud model structs use `type` for
+// domain-specific meaning (`Cache.Type` = engine "laravel_valkey";
+// `WebsocketCluster.Type` = "reverb"), which the API places under
+// `data.attributes.type`. Copying `data.type` (the resource discriminator)
+// would overwrite the domain value.
+func (e *Envelope[T]) UnmarshalJSON(b []byte) error {
+	// Extract the outer envelope as raw bytes so we can inspect the
+	// `data` shape (object vs array vs null).
+	var raw struct {
+		Data     json.RawMessage  `json:"data"`
+		Included []map[string]any `json:"included,omitempty"`
+		Meta     map[string]any   `json:"meta,omitempty"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	e.Included = raw.Included
+	e.Meta = raw.Meta
+
+	// Empty or explicit null — leave e.Data zero-valued.
+	if len(raw.Data) == 0 || string(raw.Data) == "null" {
+		return nil
+	}
+
+	// Detect array vs object by peeking at the first non-whitespace byte.
+	first := byte(0)
+	for _, c := range raw.Data {
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+			continue
+		}
+		first = c
+		break
+	}
+
+	if first == '[' {
+		// List response — flatten each JSON:API resource item.
+		var items []json.RawMessage
+		if err := json.Unmarshal(raw.Data, &items); err != nil {
+			return err
+		}
+		flat := make([]json.RawMessage, len(items))
+		for i, item := range items {
+			f, err := flattenJSONAPIResource(item)
+			if err != nil {
+				return err
+			}
+			flat[i] = f
+		}
+		flatBytes, err := json.Marshal(flat)
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal(flatBytes, &e.Data)
+	}
+
+	// Singleton — flatten if JSON:API, else pass through as flat REST.
+	flatItem, err := flattenJSONAPIResource(raw.Data)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(flatItem, &e.Data)
+}
+
+// flattenJSONAPIResource transforms a JSON:API resource object of the shape
+//
+//	{"id": "…", "type": "…", "attributes": {…}}
+//
+// into a flat object combining `attributes.*` + `id`. When the input isn't
+// JSON:API (no `attributes` sub-object), returns the input unchanged so
+// flat-REST responses fall through untouched.
+//
+// The JSON:API `type` field (resource discriminator like `"caches"` /
+// `"applications"`) is deliberately NOT copied — see the Envelope
+// UnmarshalJSON rationale above.
+func flattenJSONAPIResource(b []byte) (json.RawMessage, error) {
+	var probe struct {
+		ID         string          `json:"id"`
+		Type       string          `json:"type"`
+		Attributes json.RawMessage `json:"attributes"`
+	}
+	if err := json.Unmarshal(b, &probe); err != nil {
+		// Not a JSON object we recognise — pass through untouched.
+		return b, nil //nolint:nilerr
+	}
+	if len(probe.Attributes) == 0 || string(probe.Attributes) == "null" {
+		// Flat REST — pass through as-is.
+		return b, nil
+	}
+	// Parse attributes into a map so we can inject `id` + re-marshal.
+	var attrs map[string]json.RawMessage
+	if err := json.Unmarshal(probe.Attributes, &attrs); err != nil {
+		return nil, err
+	}
+	if probe.ID != "" {
+		idBytes, _ := json.Marshal(probe.ID)
+		attrs["id"] = idBytes
+	}
+	return json.Marshal(attrs)
 }
 
 // ErrorResponse is the shape Cloud returns on 4xx/5xx. Provider resources
