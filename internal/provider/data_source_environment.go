@@ -68,6 +68,12 @@ type EnvironmentDataSourceModel struct {
 	// CreatedAt / UpdatedAt are RFC3339 timestamps stamped by Cloud.
 	CreatedAt types.String `tfsdk:"created_at"`
 	UpdatedAt types.String `tfsdk:"updated_at"`
+
+	// VanityDomain is the Cloud-generated `<slug>-<env>-<random>.laravel.cloud`
+	// hostname every env gets automatically. Downstream Terraform configs
+	// point Cloudflare (or other DNS provider) CNAMEs at this value so
+	// custom hostnames route to Cloud.
+	VanityDomain types.String `tfsdk:"vanity_domain"`
 }
 
 // NewEnvironmentDataSource is the factory the provider registers in its
@@ -139,6 +145,12 @@ func (d *EnvironmentDataSource) Schema(ctx context.Context, req datasource.Schem
 			"updated_at": schema.StringAttribute{
 				MarkdownDescription: "RFC3339 timestamp of last mutation.",
 				Computed:            true,
+			},
+			"vanity_domain": schema.StringAttribute{
+				MarkdownDescription: "Cloud-generated `<slug>-<env>-<random>." +
+					"laravel.cloud` hostname. Point CNAMEs at this value to " +
+					"route custom hostnames to the env.",
+				Computed: true,
 			},
 		},
 	}
@@ -238,6 +250,11 @@ func (d *EnvironmentDataSource) Read(ctx context.Context, req datasource.ReadReq
 		data.UpdatedAt = types.StringValue(*env.UpdatedAt)
 	} else {
 		data.UpdatedAt = types.StringNull()
+	}
+	if env.VanityDomain != nil {
+		data.VanityDomain = types.StringValue(*env.VanityDomain)
+	} else {
+		data.VanityDomain = types.StringNull()
 	}
 
 	// Persist the hydrated model into state.

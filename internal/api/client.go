@@ -70,8 +70,14 @@ func New(baseURL, token, userAgent string, timeout time.Duration) *Client {
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
 	url := c.BaseURL + path
 
-	const maxAttempts = 3
-	var lastErr error
+	const (
+		maxAttempts     = 3
+		maxBusyAttempts = 8 // cluster-busy 422 gets more retries — serialized ops
+	)
+	var (
+		lastErr      error
+		busyAttempts int
+	)
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		var reqBody io.Reader
@@ -165,6 +171,26 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		if resp.StatusCode >= 500 && attempt < maxAttempts {
 			time.Sleep(backoff(attempt))
 			continue
+		}
+
+		// 422 with a "cluster busy" / "operation in progress" message —
+		// Cloud serializes updates on the DB cluster + rejects concurrent
+		// operations with this shape. Common when terraform provisions
+		// N schemas in parallel against one shared cluster. This gets
+		// its own retry budget (independent of maxAttempts) with a
+		// generous backoff because each cluster op takes 1-5s and we
+		// may need to wait for up to N-1 sibling ops to drain.
+		if resp.StatusCode == http.StatusUnprocessableEntity {
+			body := string(respBody)
+			if strings.Contains(body, "update operation is already in progress") ||
+				strings.Contains(body, "already in progress") {
+				if busyAttempts < maxBusyAttempts {
+					busyAttempts++
+					time.Sleep(backoff(busyAttempts) * 3) // longer wait — cluster op needs time
+					attempt = 0                           // busy retry doesn't consume the outer attempt budget
+					continue
+				}
+			}
 		}
 
 		// Terminal error — unmarshal + return.

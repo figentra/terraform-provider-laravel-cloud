@@ -387,33 +387,81 @@ func (r *EnvironmentResource) ImportState(ctx context.Context, req resource.Impo
 
 // applyEnvToModel copies API DTO -> Terraform state model.
 func applyEnvToModel(ctx context.Context, env *api.Environment, m *EnvironmentResourceModel, diags *diag.Diagnostics) {
+	// ID + Name always come from the API — Cloud is the source of
+	// truth for these (ID is server-generated; Name is echoed back).
 	m.ID = types.StringValue(env.ID)
-	m.ApplicationID = types.StringValue(env.ApplicationID)
-	m.Name = types.StringValue(env.Name)
+	if env.ApplicationID != "" {
+		m.ApplicationID = types.StringValue(env.ApplicationID)
+	}
+	if env.Name != "" {
+		m.Name = types.StringValue(env.Name)
+	}
 
-	setStringPtr(&m.Branch, env.Branch)
-	setStringPtr(&m.InheritsID, env.InheritsID)
-	setStringPtr(&m.DatabaseSchemaID, env.DatabaseSchemaID)
-	setStringPtr(&m.CacheID, env.CacheID)
-	setStringPtr(&m.WebsocketApplicationID, env.WebsocketApplicationID)
-	setStringPtr(&m.NodeVersion, env.NodeVersion)
-	setStringPtr(&m.BuildCommand, env.BuildCommand)
-	setStringPtr(&m.DeployCommand, env.DeployCommand)
-	setStringPtr(&m.Color, env.Color)
-	setStringPtr(&m.VanityDomain, env.VanityDomain)
-	setStringPtr(&m.CreatedAt, env.CreatedAt)
+	// Cloud's POST /environments response is intentionally sparse — many
+	// fields we send in the create body come back as null. Terraform's
+	// post-apply consistency check compares plan (user-set) vs state
+	// (this model). If plan had a known value + Cloud returned null,
+	// blindly setting null produces "was X, but now null" errors.
+	//
+	// Contract for every Optional+Computed field:
+	//   - Cloud returned a value → use it (overrides plan).
+	//   - Cloud returned nil + plan had a value → preserve the plan
+	//     value. A subsequent Read surfaces genuine drift.
+	//   - Cloud returned nil + plan had no value → keep null.
+	//
+	// The helper handles the three-way ternary in one place.
+	preserveOrAssign(&m.Branch, env.Branch)
+	preserveOrAssign(&m.InheritsID, env.InheritsID)
+	preserveOrAssign(&m.DatabaseSchemaID, env.DatabaseSchemaID)
+	preserveOrAssign(&m.CacheID, env.CacheID)
+	preserveOrAssign(&m.WebsocketApplicationID, env.WebsocketApplicationID)
+	preserveOrAssign(&m.Color, env.Color)
+	preserveOrAssign(&m.VanityDomain, env.VanityDomain)
+	preserveOrAssign(&m.CreatedAt, env.CreatedAt)
+	preserveOrAssign(&m.NodeVersion, env.NodeVersion)
+	preserveOrAssign(&m.BuildCommand, env.BuildCommand)
+	preserveOrAssign(&m.DeployCommand, env.DeployCommand)
 
-	setBoolPtr(&m.UsesPushToDeploy, env.UsesPushToDeploy)
-	setBoolPtr(&m.UsesDeployHook, env.UsesDeployHook)
-	setBoolPtr(&m.UsesOctane, env.UsesOctane)
-	setBoolPtr(&m.UsesHibernation, env.UsesHibernation)
+	preserveOrAssignBool(&m.UsesPushToDeploy, env.UsesPushToDeploy)
+	preserveOrAssignBool(&m.UsesDeployHook, env.UsesDeployHook)
+	preserveOrAssignBool(&m.UsesOctane, env.UsesOctane)
+	preserveOrAssignBool(&m.UsesHibernation, env.UsesHibernation)
 
+	// Variables: preserve plan map when Cloud returns nil.
 	if env.Variables != nil {
 		vars, d := types.MapValueFrom(ctx, types.StringType, env.Variables)
 		diags.Append(d...)
 		m.Variables = vars
-	} else {
+	} else if m.Variables.IsUnknown() || m.Variables.IsNull() {
 		m.Variables = types.MapNull(types.StringType)
+	}
+}
+
+// preserveOrAssign writes the API value into the destination ONLY when
+// the destination is currently Null or Unknown. If the plan set a
+// concrete value, it wins over the API response — the caller's HCL is
+// the source of truth for Optional+Computed attributes at Create time.
+// A subsequent Read refreshes from Cloud + surfaces any drift.
+func preserveOrAssign(dst *types.String, src *string) {
+	if !dst.IsNull() && !dst.IsUnknown() {
+		return // plan set a value, keep it
+	}
+	if src != nil {
+		*dst = types.StringValue(*src)
+	} else {
+		*dst = types.StringNull()
+	}
+}
+
+// preserveOrAssignBool mirrors preserveOrAssign for bool fields.
+func preserveOrAssignBool(dst *types.Bool, src *bool) {
+	if !dst.IsNull() && !dst.IsUnknown() {
+		return
+	}
+	if src != nil {
+		*dst = types.BoolValue(*src)
+	} else {
+		*dst = types.BoolNull()
 	}
 }
 

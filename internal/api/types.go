@@ -13,6 +13,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -52,6 +53,57 @@ type Application struct {
 	Organization       *Organization `json:"organization,omitempty"`
 	Environments       []Environment `json:"environments,omitempty"`
 	DefaultEnvironment *Environment  `json:"default_environment,omitempty"`
+}
+
+// UnmarshalJSON handles Cloud's polymorphic `repository` field. As of
+// 2026-08-10 Cloud responses for POST /applications return `repository`
+// as an object `{"full_name":"owner/repo","default_branch":"main"}` rather
+// than a bare string. Older endpoints (GET /applications/:id historically,
+// and third-party API forks) still return a string. The provider surfaces
+// `repository` as a plain string (`owner/repo`), so this method normalises
+// the object form to its `full_name`.
+//
+// Every other field passes through via a type alias to avoid infinite
+// recursion into json.Unmarshal.
+func (a *Application) UnmarshalJSON(data []byte) error {
+	// Alias eliminates recursion; the field-for-field shape mirrors
+	// Application except Repository holds the raw JSON bytes so we can
+	// decode it as either a string or an object.
+	type applicationAlias Application
+	aux := struct {
+		Repository json.RawMessage `json:"repository"`
+		*applicationAlias
+	}{
+		applicationAlias: (*applicationAlias)(a),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if len(aux.Repository) == 0 || string(aux.Repository) == "null" {
+		a.Repository = nil
+		return nil
+	}
+	// Try string first (legacy shape).
+	var repoStr string
+	if err := json.Unmarshal(aux.Repository, &repoStr); err == nil {
+		a.Repository = &repoStr
+		return nil
+	}
+	// Fall back to object shape (post-2026-08 wire format).
+	var repoObj struct {
+		FullName      string `json:"full_name"`
+		DefaultBranch string `json:"default_branch"`
+	}
+	if err := json.Unmarshal(aux.Repository, &repoObj); err != nil {
+		return fmt.Errorf("unmarshal application.repository: unsupported shape %q: %w",
+			string(aux.Repository), err)
+	}
+	if repoObj.FullName == "" {
+		a.Repository = nil
+		return nil
+	}
+	a.Repository = &repoObj.FullName
+	return nil
 }
 
 // CreateApplicationRequest is the POST /applications body.

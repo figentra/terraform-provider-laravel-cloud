@@ -256,45 +256,86 @@ func (r *DomainResource) ImportState(ctx context.Context, req resource.ImportSta
 // applyDomainToModel copies API DTO -> Terraform state model. Handles the
 // pre-v0.4 <-> v0.4 name aliasing so consumers using either family see
 // consistent state.
+//
+// Cloud's POST /environments/:id/domains response is sparse — every
+// server-generated field (id, environment_id, verification, created_at)
+// is present, but the caller-provided fields (www_redirect,
+// cloudflare_strategy, verification_method) may come back as null or
+// as different defaults. Terraform's post-apply consistency check rejects
+// the diff; preserve plan values on nil/empty API responses.
 func applyDomainToModel(d *api.Domain, m *DomainResourceModel) {
 	m.ID = types.StringValue(d.ID)
-	m.EnvironmentID = types.StringValue(d.EnvironmentID)
-	m.Name = types.StringValue(d.Name)
+	// EnvironmentID sometimes comes back as empty string on POST — preserve
+	// plan value in that case (the plan set it from the parent env resource).
+	if d.EnvironmentID != "" {
+		m.EnvironmentID = types.StringValue(d.EnvironmentID)
+	} else if m.EnvironmentID.IsNull() || m.EnvironmentID.IsUnknown() {
+		m.EnvironmentID = types.StringNull()
+	}
+	if d.Name != "" {
+		m.Name = types.StringValue(d.Name)
+	}
 	m.WildcardEnabled = types.BoolValue(d.WildcardEnabled)
 
 	// www_redirect / redirect_from_www — alias. WWWRedirect is a v2
 	// string enum; RedirectFromWWW is the v1 bool derived from it.
+	// Cloud's Create response often returns "none" even when plan said
+	// "www_to_root" — Cloud applies the setting async post-create.
+	// Preserve plan value when set + non-default.
+	planWWW := m.WWWRedirect
 	if d.WWWRedirect != nil {
-		m.WWWRedirect = types.StringValue(*d.WWWRedirect)
-		m.RedirectFromWWW = types.BoolValue(*d.WWWRedirect == "www_to_root" || *d.WWWRedirect == "root_to_www")
+		apiVal := *d.WWWRedirect
+		// If plan explicitly set a value + Cloud returned the default
+		// ("none"), keep the plan value.
+		if apiVal == "none" && !planWWW.IsNull() && !planWWW.IsUnknown() && planWWW.ValueString() != "none" {
+			m.WWWRedirect = planWWW
+			m.RedirectFromWWW = types.BoolValue(planWWW.ValueString() == "www_to_root" || planWWW.ValueString() == "root_to_www")
+		} else {
+			m.WWWRedirect = types.StringValue(apiVal)
+			m.RedirectFromWWW = types.BoolValue(apiVal == "www_to_root" || apiVal == "root_to_www")
+		}
 	} else if d.RedirectFromWWW {
 		m.WWWRedirect = types.StringValue("www_to_root")
 		m.RedirectFromWWW = types.BoolValue(true)
+	} else if !planWWW.IsNull() && !planWWW.IsUnknown() {
+		// Preserve plan when API omits.
+		m.WWWRedirect = planWWW
+		v := planWWW.ValueString()
+		m.RedirectFromWWW = types.BoolValue(v == "www_to_root" || v == "root_to_www")
 	} else {
 		m.WWWRedirect = types.StringValue("none")
 		m.RedirectFromWWW = types.BoolValue(false)
 	}
 
 	// cloudflare_strategy / cloudflare_managed — alias.
+	planCF := m.CloudflareStrategy
 	if d.CloudflareStrategy != nil {
 		m.CloudflareStrategy = types.StringValue(*d.CloudflareStrategy)
-		// Best-effort bool from string.
 		m.CloudflareManaged = types.BoolValue(*d.CloudflareStrategy != "manual" && *d.CloudflareStrategy != "none")
 	} else if d.CloudflareManaged {
 		m.CloudflareStrategy = types.StringValue("cloudflare-managed")
 		m.CloudflareManaged = types.BoolValue(true)
+	} else if !planCF.IsNull() && !planCF.IsUnknown() {
+		m.CloudflareStrategy = planCF
+		v := planCF.ValueString()
+		m.CloudflareManaged = types.BoolValue(v != "manual" && v != "none")
 	} else {
 		m.CloudflareStrategy = types.StringValue("manual")
 		m.CloudflareManaged = types.BoolValue(false)
 	}
 
-	// verification_method / verification — alias.
+	// verification_method / verification — alias. Cloud's response
+	// omits both fields on Create; preserve plan value.
+	planVM := m.VerificationMethod
 	if d.VerificationMethod != nil {
 		m.VerificationMethod = types.StringValue(*d.VerificationMethod)
 		m.Verification = types.StringValue(*d.VerificationMethod)
 	} else if d.Verification != "" {
 		m.VerificationMethod = types.StringValue(d.Verification)
 		m.Verification = types.StringValue(d.Verification)
+	} else if !planVM.IsNull() && !planVM.IsUnknown() {
+		m.VerificationMethod = planVM
+		m.Verification = planVM
 	} else {
 		m.VerificationMethod = types.StringNull()
 		m.Verification = types.StringNull()
@@ -302,7 +343,7 @@ func applyDomainToModel(d *api.Domain, m *DomainResourceModel) {
 
 	if d.CreatedAt != nil {
 		m.CreatedAt = types.StringValue(*d.CreatedAt)
-	} else {
+	} else if m.CreatedAt.IsNull() || m.CreatedAt.IsUnknown() {
 		m.CreatedAt = types.StringNull()
 	}
 }
