@@ -6,6 +6,38 @@ Version numbers follow [SemVer 2.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.10] — 2026-08-11 — cluster-delete race retry
+
+### Fixed
+
+- **`laravelcloud_database_cluster` DELETE now survives Cloud's
+  eventual-consistency race on schema-attachment.** Terraform's DAG
+  destroys child schemas before the parent cluster, but Cloud's
+  internal `cluster.has_schemas` guard lags behind the schema
+  DELETEs by up to several seconds. Every child schema DELETE
+  returns 200, the cascade LIST returns 0 schemas, and the cluster
+  DELETE still hits `HTTP 422: The database cluster has schemas
+attached and cannot be deleted.` The v0.4.9 cascade-list-and-
+  delete pass was the right shape but a one-shot — it didn't survive
+  the race.
+- `DeleteDatabaseCluster` now wraps its cascade + cluster-DELETE
+  pass in a bounded retry loop (5 attempts, exponential backoff
+  500ms → 8s cap, ≈ 15s worst-case). Every retry re-lists +
+  re-drains schemas before firing the cluster DELETE again. A
+  genuinely-broken Cloud state (persistent 422 across every retry)
+  fails loudly with the last error surfaced verbatim — the loop
+  doesn't stall a plan indefinitely.
+- New `(*APIError).IsSchemasAttached()` predicate detects the
+  specific 422 by message pattern. Isolated from the generic 422
+  handling so the retry loop keys on this exact race, not on any
+  422 (which could be a legitimately-broken destroy the operator
+  needs to see).
+- 404s on the cluster DELETE are now treated as idempotent — a
+  cluster already gone from a previous partially-successful destroy
+  no longer errors the plan.
+
+## [0.4.9] — 2026-08-10 — cluster cascade-delete for orphaned schemas
+
 ## [0.4.1] — 2026-08-10 — JSON:API envelope flatten
 
 ### Fixed

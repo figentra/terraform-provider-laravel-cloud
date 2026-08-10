@@ -243,3 +243,26 @@ func (e *APIError) Error() string {
 func (e *APIError) IsNotFound() bool {
 	return e.StatusCode == http.StatusNotFound
 }
+
+// IsSchemasAttached returns true when Cloud rejected a cluster DELETE
+// because it still has schemas attached. Distinguished from the
+// generic 422 so `DeleteDatabaseCluster` can drain lingering schemas
+// + retry the cluster DELETE without hard-failing.
+//
+// Cloud sometimes lags between reporting the schema list as empty
+// and actually clearing the cluster's `has_schemas` guard — the
+// terraform DAG destroys child schemas first, then fires the
+// cluster DELETE inside a single plan, and Cloud's reconciliation
+// is eventually-consistent. The retry loop in `DeleteDatabaseCluster`
+// uses this predicate to detect the race.
+func (e *APIError) IsSchemasAttached() bool {
+	if e.StatusCode != http.StatusUnprocessableEntity {
+		return false
+	}
+	// Match Cloud's canonical message + a couple of near-variants so
+	// we're resilient to minor server-side wording changes.
+	msg := strings.ToLower(e.Message)
+	return strings.Contains(msg, "has schemas attached") ||
+		strings.Contains(msg, "schemas attached and cannot") ||
+		strings.Contains(msg, "cannot be deleted") && strings.Contains(msg, "schema")
+}
