@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -78,7 +79,7 @@ func (r *DatabaseSchemaResource) Read(ctx context.Context, req resource.ReadRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	schemaOut, err := r.client.GetDatabaseSchema(ctx, state.ID.ValueString())
+	schemaOut, err := r.client.GetDatabaseSchema(ctx, state.ClusterID.ValueString(), state.ID.ValueString())
 	if err != nil {
 		var apiErr *api.APIError
 		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
@@ -103,7 +104,7 @@ func (r *DatabaseSchemaResource) Delete(ctx context.Context, req resource.Delete
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if err := r.client.DeleteDatabaseSchema(ctx, state.ID.ValueString()); err != nil {
+	if err := r.client.DeleteDatabaseSchema(ctx, state.ClusterID.ValueString(), state.ID.ValueString()); err != nil {
 		var apiErr *api.APIError
 		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
 			return
@@ -113,7 +114,19 @@ func (r *DatabaseSchemaResource) Delete(ctx context.Context, req resource.Delete
 }
 
 func (r *DatabaseSchemaResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	// Import ID takes the shape `<cluster_id>:<schema_id>`. The cluster
+	// ID is required because Cloud's schema endpoints are cluster-
+	// scoped — see api.GetDatabaseSchema.
+	parts := strings.SplitN(req.ID, ":", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		resp.Diagnostics.AddError(
+			"Invalid import ID",
+			"database_schema import expects `<cluster_id>:<schema_id>` — got "+req.ID,
+		)
+		return
+	}
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("cluster_id"), parts[0])...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[1])...)
 }
 
 func applyDBSchemaToModel(schemaOut *api.DatabaseSchema, m *DatabaseSchemaResourceModel) {

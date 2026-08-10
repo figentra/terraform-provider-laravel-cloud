@@ -67,8 +67,8 @@ func (d *DatabaseSchemaDataSource) Schema(ctx context.Context, req datasource.Sc
 				Required:            true,
 			},
 			"cluster_id": schema.StringAttribute{
-				MarkdownDescription: "ID of the parent database cluster.",
-				Computed:            true,
+				MarkdownDescription: "ID of the parent database cluster. Required — Cloud's schema endpoints are cluster-scoped.",
+				Required:            true,
 			},
 			"name": schema.StringAttribute{
 				MarkdownDescription: "Logical database name inside the cluster.",
@@ -113,8 +113,9 @@ func (d *DatabaseSchemaDataSource) Read(ctx context.Context, req datasource.Read
 		return
 	}
 
-	// Fire the read against Cloud.
-	schemaObj, err := d.client.GetDatabaseSchema(ctx, data.ID.ValueString())
+	// Fire the read against Cloud. Cluster ID is required — schema
+	// endpoints are cluster-scoped (see api.GetDatabaseSchema).
+	schemaObj, err := d.client.GetDatabaseSchema(ctx, data.ClusterID.ValueString(), data.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Failed to read database schema",
@@ -124,7 +125,9 @@ func (d *DatabaseSchemaDataSource) Read(ctx context.Context, req datasource.Read
 	}
 
 	// Hydrate. cluster_id and name are non-nullable per the API contract.
-	data.ClusterID = types.StringValue(schemaObj.ClusterID)
+	if schemaObj.ClusterID != "" {
+		data.ClusterID = types.StringValue(schemaObj.ClusterID)
+	}
 	data.Name = types.StringValue(schemaObj.Name)
 
 	if schemaObj.Status != nil {
