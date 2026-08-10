@@ -34,6 +34,25 @@ func (c *Client) CreateDatabaseSchema(ctx context.Context, clusterID string, req
 	return &env.Data, nil
 }
 
+// ListDatabaseSchemas returns every schema attached to a cluster. Used by
+// `DatabaseClusterResource.Delete` to cascade-reap orphaned schemas Cloud
+// UI users may have created out-of-band. Empty result on a fresh cluster.
+//
+// The `Envelope[[]T]` shape handles the JSON:API list wrapping — see
+// `types.go` §Envelope.UnmarshalJSON for the array-vs-singleton detection.
+func (c *Client) ListDatabaseSchemas(ctx context.Context, clusterID string) ([]DatabaseSchema, error) {
+	if clusterID == "" {
+		return nil, errors.New("cluster id is required")
+	}
+	path := fmt.Sprintf("/databases/clusters/%s/databases", clusterID)
+
+	var env Envelope[[]DatabaseSchema]
+	if err := c.do(ctx, "GET", path, nil, &env); err != nil {
+		return nil, fmt.Errorf("list database schemas: %w", err)
+	}
+	return env.Data, nil
+}
+
 // GetDatabaseSchema reads a schema by ID. Cloud's schema endpoints are
 // cluster-scoped — the bare `/databases/<id>` path 404s ("No query
 // results for model [App\Models\Database]") because Cloud routes
