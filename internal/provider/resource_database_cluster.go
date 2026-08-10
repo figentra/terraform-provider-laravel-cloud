@@ -295,9 +295,19 @@ func extractConfigMap(ctx context.Context, m types.Map) (map[string]any, diag.Di
 // applyDBClusterToModel copies API DTO -> Terraform state model.
 func applyDBClusterToModel(cluster *api.DatabaseCluster, m *DatabaseClusterResourceModel) {
 	m.ID = types.StringValue(cluster.ID)
-	m.OrganizationID = types.StringValue(cluster.OrganizationID)
-	m.Name = types.StringValue(cluster.Name)
-	m.Region = types.StringValue(cluster.Region)
+	// Preserve plan values when API returns empty (see rationale in
+	// resource_application.go).
+	if cluster.OrganizationID != "" {
+		m.OrganizationID = types.StringValue(cluster.OrganizationID)
+	} else if m.OrganizationID.IsUnknown() {
+		m.OrganizationID = types.StringNull()
+	}
+	if cluster.Name != "" {
+		m.Name = types.StringValue(cluster.Name)
+	}
+	if cluster.Region != "" {
+		m.Region = types.StringValue(cluster.Region)
+	}
 	setStringPtr(&m.Type, cluster.Type)
 
 	// Config — encode back to string map for state.

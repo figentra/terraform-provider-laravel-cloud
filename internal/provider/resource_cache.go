@@ -227,10 +227,29 @@ func (r *CacheResource) ImportState(ctx context.Context, req resource.ImportStat
 
 func applyCacheToModel(cache *api.Cache, m *CacheResourceModel) {
 	m.ID = types.StringValue(cache.ID)
-	m.OrganizationID = types.StringValue(cache.OrganizationID)
-	m.Name = types.StringValue(cache.Name)
-	m.Region = types.StringValue(cache.Region)
-	m.Size = types.StringValue(cache.Size)
+	// Cloud's cache POST/GET responses omit organization_id (the org is
+	// inferred from the token's default context). Preserve the plan's
+	// organization_id when the API leaves it empty so terraform's
+	// post-apply consistency check doesn't complain.
+	if cache.OrganizationID != "" {
+		m.OrganizationID = types.StringValue(cache.OrganizationID)
+	} else if m.OrganizationID.IsUnknown() {
+		// Plan didn't set org_id AND API didn't return it — the value is
+		// server-inferred but not surfaced. Collapse Unknown to Null so
+		// terraform accepts the apply result.
+		m.OrganizationID = types.StringNull()
+	}
+	// Preserve plan values when API returns empty (same rationale as
+	// organization_id — some endpoints omit fields the plan requires).
+	if cache.Name != "" {
+		m.Name = types.StringValue(cache.Name)
+	}
+	if cache.Region != "" {
+		m.Region = types.StringValue(cache.Region)
+	}
+	if cache.Size != "" {
+		m.Size = types.StringValue(cache.Size)
+	}
 	setStringPtr(&m.Type, cache.Type)
 	setBoolPtr(&m.AutoUpgradeEnabled, cache.AutoUpgradeEnabled)
 	setBoolPtr(&m.IsPublic, cache.IsPublic)

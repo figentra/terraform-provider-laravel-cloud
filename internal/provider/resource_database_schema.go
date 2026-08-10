@@ -118,8 +118,17 @@ func (r *DatabaseSchemaResource) ImportState(ctx context.Context, req resource.I
 
 func applyDBSchemaToModel(schemaOut *api.DatabaseSchema, m *DatabaseSchemaResourceModel) {
 	m.ID = types.StringValue(schemaOut.ID)
-	m.ClusterID = types.StringValue(schemaOut.ClusterID)
-	m.Name = types.StringValue(schemaOut.Name)
+	// The Cloud API's POST /databases/clusters/:clusterId/databases response
+	// omits `relationships.cluster` (redundant with the URL path). Same for
+	// GET /databases/:id in some Cloud versions. Preserve the plan's
+	// cluster_id when the response leaves it empty — the plan value is
+	// authoritative because the schema declares cluster_id Required.
+	if schemaOut.ClusterID != "" {
+		m.ClusterID = types.StringValue(schemaOut.ClusterID)
+	}
+	if schemaOut.Name != "" {
+		m.Name = types.StringValue(schemaOut.Name)
+	}
 	if schemaOut.CreatedAt != nil {
 		m.CreatedAt = types.StringValue(*schemaOut.CreatedAt)
 	} else {

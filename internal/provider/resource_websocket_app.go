@@ -164,7 +164,13 @@ func (r *WebsocketAppResource) ImportState(ctx context.Context, req resource.Imp
 
 func applyWSAppToModel(a *api.WebsocketApp, m *WebsocketAppResourceModel) {
 	m.ID = types.StringValue(a.ID)
-	m.ClusterID = types.StringValue(a.ClusterID)
+	// Cloud's POST response for websocket-apps omits the parent cluster
+	// relationship (redundant with the URL path). Preserve the plan
+	// value when the API leaves it empty — cluster_id is Required so
+	// the plan always carries it.
+	if a.ClusterID != "" {
+		m.ClusterID = types.StringValue(a.ClusterID)
+	}
 	if a.Name != "" {
 		m.Name = types.StringValue(a.Name)
 	} else {

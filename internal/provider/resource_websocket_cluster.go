@@ -185,9 +185,20 @@ func (r *WebsocketClusterResource) ImportState(ctx context.Context, req resource
 
 func applyWSClusterToModel(c *api.WebsocketCluster, m *WebsocketClusterResourceModel) {
 	m.ID = types.StringValue(c.ID)
-	m.OrganizationID = types.StringValue(c.OrganizationID)
-	m.Name = types.StringValue(c.Name)
-	m.Region = types.StringValue(c.Region)
+	// Cloud omits organization_id + basic scalars in the POST response;
+	// preserve the plan value / collapse Unknown → Null when API leaves
+	// them empty (see resource_application.go for the fuller rationale).
+	if c.OrganizationID != "" {
+		m.OrganizationID = types.StringValue(c.OrganizationID)
+	} else if m.OrganizationID.IsUnknown() {
+		m.OrganizationID = types.StringNull()
+	}
+	if c.Name != "" {
+		m.Name = types.StringValue(c.Name)
+	}
+	if c.Region != "" {
+		m.Region = types.StringValue(c.Region)
+	}
 	setStringPtr(&m.Type, c.Type)
 	if c.Size != "" {
 		m.Size = types.StringValue(c.Size)

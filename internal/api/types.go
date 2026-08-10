@@ -23,7 +23,13 @@ import (
 // Fields mirror the Cloud API response shape verbatim; provider schema
 // declares the Terraform-facing names alongside their JSON tags.
 type Application struct {
-	ID                        string     `json:"id"`
+	ID string `json:"id"`
+	// OrganizationID is populated by the Envelope's JSON:API flatten from
+	// `data.relationships.organization.data.id` when the response body
+	// carries the organization relationship. Provider code prefers this
+	// over the `?include=organization` included-resource block for
+	// simplicity — a relationship-only response is enough to get the FK.
+	OrganizationID            string     `json:"organization_id,omitempty"`
 	Name                      string     `json:"name"`
 	Slug                      string     `json:"slug"`
 	Region                    string     `json:"region"`
@@ -180,20 +186,44 @@ func (e *Envelope[T]) UnmarshalJSON(b []byte) error {
 
 // flattenJSONAPIResource transforms a JSON:API resource object of the shape
 //
-//	{"id": "…", "type": "…", "attributes": {…}}
+//	{
+//	  "id":            "…",
+//	  "type":          "…",
+//	  "attributes":    {…},
+//	  "relationships": {"<name>": {"data": {"id": "…", "type": "…"}}, …}
+//	}
 //
-// into a flat object combining `attributes.*` + `id`. When the input isn't
+// into a flat object combining `attributes.*` + `id` + one
+// `<relationship-name>_id` key per relationship. When the input isn't
 // JSON:API (no `attributes` sub-object), returns the input unchanged so
 // flat-REST responses fall through untouched.
 //
-// The JSON:API `type` field (resource discriminator like `"caches"` /
+// The JSON:API `data.type` field (resource discriminator like `"caches"` /
 // `"applications"`) is deliberately NOT copied — see the Envelope
 // UnmarshalJSON rationale above.
+//
+// Relationship-to-attribute mapping example:
+//
+//	"relationships": {
+//	  "organization": {"data": {"id": "org-abc", "type": "organizations"}},
+//	  "cluster":      {"data": {"id": "cluster-xyz", "type": "database-clusters"}}
+//	}
+//
+// becomes:
+//
+//	"organization_id": "org-abc",
+//	"cluster_id":      "cluster-xyz"
+//
+// The provider's Cache/Application/DatabaseSchema/WebsocketApp structs
+// declare `organization_id`, `cluster_id`, etc. as `json:"cluster_id"` —
+// so writing the `<name>_id` key into the flat object populates them
+// automatically without per-resource wiring.
 func flattenJSONAPIResource(b []byte) (json.RawMessage, error) {
 	var probe struct {
-		ID         string          `json:"id"`
-		Type       string          `json:"type"`
-		Attributes json.RawMessage `json:"attributes"`
+		ID            string          `json:"id"`
+		Type          string          `json:"type"`
+		Attributes    json.RawMessage `json:"attributes"`
+		Relationships json.RawMessage `json:"relationships"`
 	}
 	if err := json.Unmarshal(b, &probe); err != nil {
 		// Not a JSON object we recognise — pass through untouched.
@@ -203,7 +233,8 @@ func flattenJSONAPIResource(b []byte) (json.RawMessage, error) {
 		// Flat REST — pass through as-is.
 		return b, nil
 	}
-	// Parse attributes into a map so we can inject `id` + re-marshal.
+	// Parse attributes into a map so we can inject `id` + relationships
+	// + re-marshal.
 	var attrs map[string]json.RawMessage
 	if err := json.Unmarshal(probe.Attributes, &attrs); err != nil {
 		return nil, err
@@ -212,7 +243,56 @@ func flattenJSONAPIResource(b []byte) (json.RawMessage, error) {
 		idBytes, _ := json.Marshal(probe.ID)
 		attrs["id"] = idBytes
 	}
+	// Hoist JSON:API relationships into `<name>_id` attribute keys.
+	if len(probe.Relationships) > 0 && string(probe.Relationships) != "null" {
+		var rels map[string]struct {
+			Data struct {
+				ID   string `json:"id"`
+				Type string `json:"type"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(probe.Relationships, &rels); err == nil {
+			for name, rel := range rels {
+				if rel.Data.ID == "" {
+					continue
+				}
+				// snake_case the relationship name + append `_id` so
+				// `relationships.organization` → `organization_id`,
+				// `relationships.defaultEnvironment` → `default_environment_id`.
+				key := camelToSnake(name) + "_id"
+				// Do NOT overwrite an attribute-supplied value — some
+				// Cloud endpoints put the FK under `attributes.<key>_id`
+				// AND redundantly under `relationships.<key>`. When both
+				// are present, the attributes value wins.
+				if _, exists := attrs[key]; !exists {
+					idBytes, _ := json.Marshal(rel.Data.ID)
+					attrs[key] = idBytes
+				}
+			}
+		}
+	}
 	return json.Marshal(attrs)
+}
+
+// camelToSnake converts camelCase or PascalCase identifiers into snake_case.
+// `defaultEnvironment` → `default_environment`. Idempotent on already-snake
+// inputs (`cluster` → `cluster`; `source_control_provider` unchanged).
+func camelToSnake(in string) string {
+	if in == "" {
+		return in
+	}
+	out := make([]byte, 0, len(in)+4)
+	for i := 0; i < len(in); i++ {
+		c := in[i]
+		if c >= 'A' && c <= 'Z' {
+			if i > 0 && in[i-1] != '_' {
+				out = append(out, '_')
+			}
+			c += 'a' - 'A'
+		}
+		out = append(out, c)
+	}
+	return string(out)
 }
 
 // ErrorResponse is the shape Cloud returns on 4xx/5xx. Provider resources

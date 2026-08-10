@@ -366,18 +366,49 @@ func (r *ApplicationResource) ImportState(ctx context.Context, req resource.Impo
 // mapping in one place.
 func applyAPIToModel(app *api.Application, model *ApplicationResourceModel) {
 	model.ID = types.StringValue(app.ID)
-	model.Name = types.StringValue(app.Name)
-	model.Slug = types.StringValue(app.Slug)
-	model.Region = types.StringValue(app.Region)
-	model.SourceControlProviderType = types.StringValue(app.SourceControlProviderType)
+	// Preserve plan values when API omits the field — Cloud's POST
+	// response can ship a partial shape (relationships not included,
+	// computed attributes eventually-consistent).
+	if app.Name != "" {
+		model.Name = types.StringValue(app.Name)
+	}
+	if app.Slug != "" {
+		model.Slug = types.StringValue(app.Slug)
+	} else if model.Slug.IsUnknown() {
+		// Slug is Cloud-generated (Computed). If the create response
+		// omits it (eventually-consistent field), collapse Unknown →
+		// Null so terraform's post-apply consistency check accepts
+		// the result. Next refresh will populate the real value.
+		model.Slug = types.StringNull()
+	}
+	if app.Region != "" {
+		model.Region = types.StringValue(app.Region)
+	}
+	if app.SourceControlProviderType != "" {
+		model.SourceControlProviderType = types.StringValue(app.SourceControlProviderType)
+	}
 
-	if app.Organization != nil {
+	// organization_id lookup order (Cloud sometimes ships partial shapes):
+	//   1. Envelope-flatten from `data.relationships.organization.data.id`.
+	//   2. `?include=organization` included-resource block on
+	//      `app.Organization.ID`.
+	//   3. Preserve the plan's value; collapse Unknown → Null if both
+	//      response paths are empty and plan didn't set it. Terraform's
+	//      post-apply consistency check requires known values.
+	switch {
+	case app.OrganizationID != "":
+		model.OrganizationID = types.StringValue(app.OrganizationID)
+	case app.Organization != nil && app.Organization.ID != "":
 		model.OrganizationID = types.StringValue(app.Organization.ID)
+	case model.OrganizationID.IsUnknown():
+		model.OrganizationID = types.StringNull()
 	}
 
 	if app.Repository != nil {
 		model.Repository = types.StringValue(*app.Repository)
-	} else {
+	} else if model.Repository.IsUnknown() {
+		// Preserve plan value when API omits repository — nothing to
+		// overwrite if the user supplied one in HCL.
 		model.Repository = types.StringNull()
 	}
 
