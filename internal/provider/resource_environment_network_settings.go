@@ -328,12 +328,16 @@ func (r *EnvironmentNetworkSettingsResource) Delete(ctx context.Context, req res
 		return
 	}
 
-	// Reset to Cloud's most permissive defaults.
+	// Reset to Cloud's most permissive enum values (SDK canonical).
+	// The SDK enums (verified 2026-08-10) accept: frame=deny/sameorigin/all,
+	// content_type=nosniff/none, robots_tag="index, follow"/"noindex, nofollow",
+	// firewall_rate_limit_level=challenge/throttle/ban, cache=default/bypass.
+	// Previous placeholder values (`disabled`, `all`) surfaced as HTTP 422.
 	defaultStrategy := "default"
-	frame := "disabled"
-	contentType := "disabled"
-	robots := "all"
-	rateLimit := "disabled"
+	frame := "all"
+	contentType := "none"
+	robots := "index, follow"
+	rateLimit := "throttle"
 	underAttack := false
 
 	patch := api.UpdateEnvironmentNetworkSettingsRequest{

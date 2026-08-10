@@ -6,6 +6,28 @@ Version numbers follow [SemVer 2.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-08-11 — network settings Delete-path enum fix
+
+Empirical Cloud SDK probe surfaced that the placeholder enum values used in
+`EnvironmentNetworkSettingsResource.Delete()` (`disabled` for frame /
+content_type / rate_limit; `all` for robots_tag) return HTTP 422 —
+`disabled` isn't an accepted value on any SDK enum. Delete now uses the
+most-permissive SDK-canonical value per enum: `frame=all`,
+`content_type=none`, `robots_tag="index, follow"`, `rate_limit=throttle`,
+`cache=default`. Previous behaviour would fail-warn on destroy plans;
+current behaviour lets destroys complete cleanly.
+
+Non-breaking (Delete path only, previously unreachable in dev/stg/prd
+apply). Callers still don't need to touch the resource — the module
+composing it handles defaults per env.
+
+### Fixed
+
+- `EnvironmentNetworkSettingsResource.Delete()`: SDK-canonical enum values
+  instead of previous placeholders. Verified against SDK enums at
+  `.ref/laravel-cloud-sdk-main/src/Enums/ResponseHeaders*.php` +
+  `FirewallRateLimitLevel.php` + `CacheStrategy.php`.
+
 ## [0.5.0] — 2026-08-11 — deploy runtime primitives (BREAKING minor: 7 new resources)
 
 Wire-format-safe minor bump — every existing resource keeps its current
