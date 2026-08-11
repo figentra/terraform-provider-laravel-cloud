@@ -6,6 +6,67 @@ Version numbers follow [SemVer 2.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-08-11 — writable `php_major_version` on `laravelcloud_environment`
+
+Every Cloud environment now carries a writable `php_major_version` attribute
+on `laravelcloud_environment`. Values: `8.2` / `8.3` / `8.4` / `8.5`.
+Cloud defaults to `8.5` when unset — pinning unblocks apps whose
+composer.json constraint excludes the newest (canonical example:
+`phpoffice/phpspreadsheet 1.30.6` requires `php >=7.4.0 <8.5.0`).
+
+### The contract quirk (documented in code)
+
+Empirical curl probe against `PATCH /api/environments/:id` surfaced an
+asymmetry between the read and write field names for the PHP version:
+
+- **Read** — Cloud's GET response returns `php_major_version` (e.g. `"8.4"`).
+- **Write** — Cloud's PATCH accepts `php_version` with a mandatory `:1`
+  suffix (e.g. `"8.4:1"`). The vendor SDK (redberry/laravel-cloud-sdk)
+  hardcodes the suffix in `UpdateEnvironmentData::toArray()`.
+
+Sending `php_major_version` on PATCH (or `php_version` without the `:1`
+suffix) is silently ignored by Cloud — HTTP 200 with no state change.
+The provider handles the encode / decode internally; consumers only ever
+see the plain `"8.4"` shape.
+
+### The create-then-patch flow
+
+Cloud's POST `/applications/:id/environments` endpoint accepts only
+`name` / `branch` / `cluster_id` per the SDK's `CreateEnvironmentData`
+DTO. When `php_major_version` is set on Create, the provider now fires
+a post-create PATCH to apply the pin, then re-reads state. This
+mirrors how the SDK works and avoids the "field silently dropped on
+POST → Terraform never fires an Update because plan matches state" trap.
+
+### Known limitations documented
+
+Also documented (in schema markdown + inline comments): the `color`
+attribute suffers the same silent-drop asymmetry — Cloud accepts it on
+PATCH but never persists nor returns it. The dashboard color picker
+uses a separate undocumented endpoint. Every apply is best-effort;
+visible drift is expected until the vendor exposes the read side.
+Codified as a known-limitation banner on the schema attribute so
+operators aren't surprised.
+
+### Added
+
+- `laravelcloud_environment.php_major_version` — Optional + Computed
+  string attribute with `stringvalidator.OneOf("8.2", "8.3", "8.4",
+"8.5")` + `stringplanmodifier.UseStateForUnknown()`.
+- `api.Environment.PhpMajorVersion` — read-side field.
+- `api.UpdateEnvironmentRequest.PhpVersion` — write-side field with the
+  `:1` suffix documented via the type's leading comment block.
+- Post-create PATCH in `resource_environment.go` Create() — fires when
+  `php_major_version` is set + returns the re-read env to hydrate state.
+
+### Documented
+
+- Full PHP-VERSION CONTRACT ASYMMETRY block on
+  `internal/api/environments.go:UpdateEnvironmentRequest`.
+- Color KNOWN LIMITATION banner on `internal/api/environments.go:Environment`
+  - on the schema attribute markdown in
+    `internal/provider/resource_environment.go`.
+
 ## [0.5.2] — 2026-08-11 — network settings Delete-path enum fix
 
 Empirical Cloud SDK probe surfaced that the placeholder enum values used in

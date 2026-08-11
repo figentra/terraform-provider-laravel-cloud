@@ -87,8 +87,29 @@ type Environment struct {
 	UsesOctane       *bool `json:"uses_octane,omitempty"`
 	UsesHibernation  *bool `json:"uses_hibernation,omitempty"`
 
+	// PhpMajorVersion is the READ-SIDE PHP version field — Cloud's GET
+	// /environments/:id response returns `php_major_version` (e.g. "8.4").
+	// Added in v0.7.0.
+	//
+	// Cloud's WRITE-SIDE field is DIFFERENT: `php_version` with a mandatory
+	// `:1` suffix (e.g. "8.4:1"). See `UpdateEnvironmentRequest.PhpVersion`.
+	// The vendor SDK (redberry/laravel-cloud-sdk `UpdateEnvironmentData::toArray()`)
+	// encodes the enum's backing value + `:1` on every write; the read
+	// side returns the plain major version.
+	//
+	// Consumers see only the plain "8.4" shape — the provider handles the
+	// write-side `:1` suffix internally in the resource's Create/Update.
+	PhpMajorVersion *string `json:"php_major_version,omitempty"`
+
 	// Visual identifier — "green"/"orange"/"red"/etc. Surfaced in Cloud
 	// dashboard chip color. Nullable — Cloud picks a default when unset.
+	//
+	// KNOWN LIMITATION: Cloud's API silently accepts `color` on
+	// PATCH but does NOT persist nor return it. The dashboard color
+	// picker uses a separate (undocumented) endpoint. Every write via
+	// this provider is best-effort; visible drift is expected until
+	// the vendor exposes the read side. Codified in v0.6.0's schema
+	// enum validator to at least reject invalid values plan-time.
 	Color *string `json:"color,omitempty"`
 
 	// VanityDomain is the Cloud-generated `<app>-<env>.laravel.cloud`
@@ -124,6 +145,23 @@ type CreateEnvironmentRequest struct {
 // UpdateEnvironmentRequest is PATCH /environments/:id — partial update.
 // Every field is a pointer so operators can partial-update without wiping
 // unset fields.
+//
+// PHP-VERSION CONTRACT ASYMMETRY (v0.7.0):
+//
+//	Cloud's PATCH endpoint accepts the WRITE field name `php_version`
+//	with a mandatory `:1` suffix appended to the semver — e.g.
+//	`{"php_version": "8.4:1"}` — NOT `php_major_version`.
+//
+//	The suffix is the vendor's internal sub-version index; the SDK
+//	(redberry/laravel-cloud-sdk `UpdateEnvironmentData::toArray()`)
+//	hardcodes `:1`. Sending `php_major_version` — or `php_version`
+//	without the suffix — is silently ignored (HTTP 200, no-op).
+//
+//	The GET response returns the plain major version under
+//	`php_major_version` (see Environment.PhpMajorVersion). The
+//	resource layer at `internal/provider/resource_environment.go`
+//	handles the encode / decode; upstream consumers see only the
+//	plain "8.4" shape.
 type UpdateEnvironmentRequest struct {
 	Branch                 *string           `json:"branch,omitempty"`
 	Variables              map[string]string `json:"variables,omitempty"`
@@ -141,6 +179,16 @@ type UpdateEnvironmentRequest struct {
 	UsesHibernation  *bool `json:"uses_hibernation,omitempty"`
 
 	Color *string `json:"color,omitempty"`
+
+	// PhpVersion is the WRITE-SIDE PHP version field — see the
+	// PHP-VERSION CONTRACT ASYMMETRY comment on UpdateEnvironmentRequest
+	// above. Encoded shape is `"<major>:1"` (e.g. `"8.4:1"`); the
+	// resource layer builds the suffix from the plain `php_major_version`
+	// HCL input before firing the PATCH.
+	//
+	// Read-side value lives on Environment.PhpMajorVersion — Cloud's
+	// GET response returns just the major version, without the suffix.
+	PhpVersion *string `json:"php_version,omitempty"`
 }
 
 // CreateEnvironment provisions a new environment under an application.

@@ -55,7 +55,14 @@ type EnvironmentResourceModel struct {
 	UsesOctane       types.Bool `tfsdk:"uses_octane"`
 	UsesHibernation  types.Bool `tfsdk:"uses_hibernation"`
 
-	Color        types.String `tfsdk:"color"`
+	Color types.String `tfsdk:"color"`
+
+	// PHP major version — one of "8.2", "8.3", "8.4", "8.5". Added in v0.7.0.
+	// Cloud's read field is `php_major_version` (plain "8.4"); write field
+	// is `php_version` (with `:1` suffix). Encoding happens in
+	// Create/Update; the model surfaces only the plain "8.4" shape.
+	PhpMajorVersion types.String `tfsdk:"php_major_version"`
+
 	VanityDomain types.String `tfsdk:"vanity_domain"`
 	CreatedAt    types.String `tfsdk:"created_at"`
 }
@@ -163,11 +170,41 @@ func (r *EnvironmentResource) Schema(_ context.Context, _ resource.SchemaRequest
 					"`gray`, `slate`, `zinc`, `red`, `rose`, `orange`, `amber`, `yellow`, " +
 					"`lime`, `green`, `emerald`, `teal`, `cyan`, `sky`, `blue`, `indigo`, " +
 					"`violet`, `purple`, `fuchsia`, `pink`. Cloud picks a default when unset. " +
-					"Validated enum added in v0.6.0.",
+					"Validated enum added in v0.6.0.\n\n" +
+					"**Known limitation (v0.6.0+):** Cloud's PATCH endpoint " +
+					"silently accepts this field but does NOT persist or " +
+					"return it — the dashboard color picker uses a separate " +
+					"undocumented endpoint. Every apply is best-effort; " +
+					"visible drift is expected until the vendor exposes the " +
+					"read side.",
 				Optional: true,
 				Computed: true,
 				Validators: []validator.String{
 					stringvalidator.OneOf(api.ValidColors...),
+				},
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"php_major_version": schema.StringAttribute{
+				MarkdownDescription: "PHP major version pinned for this environment — one of " +
+					"`8.2`, `8.3`, `8.4`, `8.5`. Added in v0.7.0. Cloud defaults " +
+					"to the latest available (`8.5` today) when unset; pinning " +
+					"unblocks apps whose composer.json constraint excludes the " +
+					"newest.\n\n" +
+					"**Cloud API contract quirk (documented in v0.7.0):** the " +
+					"read field is `php_major_version` (plain `\"8.4\"`); the " +
+					"write field is `php_version` with a mandatory `:1` suffix " +
+					"(`\"8.4:1\"`). The provider handles the encode / decode " +
+					"internally — the HCL surface uses only the plain `\"8.4\"` " +
+					"shape.\n\n" +
+					"**Create-then-update:** Cloud's POST " +
+					"`/applications/:id/environments` endpoint ignores " +
+					"`php_version` — it accepts only `name` / `branch` / " +
+					"`cluster_id`. When set on Create, the provider fires a " +
+					"post-create PATCH to apply the pin, then re-reads.",
+				Optional: true,
+				Computed: true,
+				Validators: []validator.String{
+					stringvalidator.OneOf("8.2", "8.3", "8.4", "8.5"),
 				},
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
@@ -271,6 +308,31 @@ func (r *EnvironmentResource) Create(ctx context.Context, req resource.CreateReq
 		return
 	}
 
+	// Post-create PATCH — Cloud's POST endpoint accepts only a narrow
+	// slice of fields (name / branch / cluster_id per the vendor SDK's
+	// CreateEnvironmentData). Anything the operator sets that requires
+	// a PATCH goes through here immediately after the env exists.
+	//
+	// Today this covers php_major_version — Cloud silently drops it on
+	// POST but honours it on PATCH. Extend the block when we find
+	// another field with the same asymmetry.
+	if !plan.PhpMajorVersion.IsNull() && !plan.PhpMajorVersion.IsUnknown() {
+		phpWrite := plan.PhpMajorVersion.ValueString() + ":1"
+		updated, uerr := r.client.UpdateEnvironment(ctx, env.ID, api.UpdateEnvironmentRequest{
+			PhpVersion: &phpWrite,
+		})
+		if uerr != nil {
+			resp.Diagnostics.AddError(
+				"Failed to pin php_major_version on new environment",
+				"Environment was created, but the post-create PATCH to set php_version failed. "+
+					"The env now exists at its Cloud-default PHP version and will need a "+
+					"terraform apply retry OR a manual dashboard fix.\n\nUnderlying error: "+uerr.Error(),
+			)
+			return
+		}
+		env = updated
+	}
+
 	applyEnvToModel(ctx, env, &plan, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
@@ -356,6 +418,13 @@ func (r *EnvironmentResource) Update(ctx context.Context, req resource.UpdateReq
 		v := plan.Color.ValueString()
 		apiReq.Color = &v
 	}
+	if !plan.PhpMajorVersion.IsNull() && !plan.PhpMajorVersion.IsUnknown() {
+		// Encode plain "8.4" → Cloud's write-side "8.4:1" shape. The
+		// suffix is mandatory — see the PHP-VERSION CONTRACT ASYMMETRY
+		// comment on api.UpdateEnvironmentRequest.
+		phpWrite := plan.PhpMajorVersion.ValueString() + ":1"
+		apiReq.PhpVersion = &phpWrite
+	}
 	if !plan.Variables.IsNull() && !plan.Variables.IsUnknown() {
 		vars := make(map[string]string, len(plan.Variables.Elements()))
 		resp.Diagnostics.Append(plan.Variables.ElementsAs(ctx, &vars, false)...)
@@ -425,6 +494,7 @@ func applyEnvToModel(ctx context.Context, env *api.Environment, m *EnvironmentRe
 	preserveOrAssign(&m.CacheID, env.CacheID)
 	preserveOrAssign(&m.WebsocketApplicationID, env.WebsocketApplicationID)
 	preserveOrAssign(&m.Color, env.Color)
+	preserveOrAssign(&m.PhpMajorVersion, env.PhpMajorVersion)
 	preserveOrAssign(&m.VanityDomain, env.VanityDomain)
 	preserveOrAssign(&m.CreatedAt, env.CreatedAt)
 	preserveOrAssign(&m.NodeVersion, env.NodeVersion)
