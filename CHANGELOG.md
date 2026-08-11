@@ -6,6 +6,59 @@ Version numbers follow [SemVer 2.0](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-08-11 — env vars flow through dedicated `/variables` endpoint
+
+Fixed the silent-drop bug where `variables` on `laravelcloud_environment`
+was accepted by Cloud's env-root PATCH (HTTP 200) but never persisted —
+Cloud only returns the operator-set list under `environment_variables`
+via a dedicated `POST /environments/:id/variables` endpoint (per the
+vendor SDK's `SetEnvironmentVariablesRequest`). The old code path wrote
+to `PATCH /environments/:id` with `{"variables": {...}}` and Cloud
+silently dropped the field on every write.
+
+### Empirical proof
+
+```
+$ curl -X PATCH /api/environments/$ENV \
+    -d '{"variables":{"TEST":"hello"}}'
+{"data":{"id":"...","environment_variables":[{"key":"APP_KEY","value":"..."}]}}  # TEST is missing
+
+$ curl -X POST /api/environments/$ENV/variables \
+    -d '{"method":"append","variables":[{"key":"TEST","value":"hello"}]}'
+{"data":{"id":"...","environment_variables":[{"key":"APP_KEY",...},{"key":"TEST","value":"hello"}]}}  # persisted
+```
+
+### API changes (BREAKING for internal callers only)
+
+- Added `Environment.EnvironmentVariables` field (array of `{key, value}`
+  pairs) — this is Cloud's read shape. The old `Environment.Variables`
+  map field is deprecated but retained for backward compat.
+- Added `Client.SetEnvironmentVariables(id, req)` → POST /variables.
+- Added `Client.DeleteEnvironmentVariables(id, keys)` → POST
+  /variables/delete.
+- `CreateEnvironmentRequest.Variables` and `UpdateEnvironmentRequest.Variables`
+  are no longer sent by the resource — the provider orchestrates env
+  creation, php PATCH, and env-var sync in three sequential API calls.
+
+### Resource behavior
+
+- **Create**: POST env → PATCH php_major_version → POST /variables
+  (`method=append`) with the operator's HCL map. Cloud's
+  auto-generated APP_KEY survives when HCL doesn't manage it.
+- **Update**: Diff prior state keys vs new plan keys. POST /variables/delete
+  for removed keys → PATCH env root for non-var fields → POST /variables
+  (`method=append`) for the new plan set.
+- **Read**: Filter Cloud's env-var list to keys present in state. Keys
+  outside state (Cloud-auto APP_KEY etc.) don't hoist into terraform's
+  managed set — they live untouched on Cloud.
+
+### Migration for existing state
+
+Existing state may show the pre-0.8.0 fake-write map (7-key
+placeholder). First plan under 0.8.0 will show all managed keys as
+adds — that is correct behavior: Cloud was empty for those keys the
+whole time. Apply the plan; subsequent plans stabilise.
+
 ## [0.7.0] — 2026-08-11 — writable `php_major_version` on `laravelcloud_environment`
 
 Every Cloud environment now carries a writable `php_major_version` attribute

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -293,14 +294,11 @@ func (r *EnvironmentResource) Create(ctx context.Context, req resource.CreateReq
 		v := plan.Color.ValueString()
 		apiReq.Color = &v
 	}
-	if !plan.Variables.IsNull() && !plan.Variables.IsUnknown() {
-		vars := make(map[string]string, len(plan.Variables.Elements()))
-		resp.Diagnostics.Append(plan.Variables.ElementsAs(ctx, &vars, false)...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		apiReq.Variables = vars
-	}
+	// NOTE: `variables` is INTENTIONALLY NOT sent on Create — Cloud's
+	// POST /applications/:id/environments endpoint silently drops the
+	// `variables` field even though it accepts HTTP 200. Env vars land
+	// through a separate POST /environments/:id/variables call after
+	// the env exists. See §"env-var reconciliation" below.
 
 	env, err := r.client.CreateEnvironment(ctx, plan.ApplicationID.ValueString(), apiReq)
 	if err != nil {
@@ -327,6 +325,34 @@ func (r *EnvironmentResource) Create(ctx context.Context, req resource.CreateReq
 				"Environment was created, but the post-create PATCH to set php_version failed. "+
 					"The env now exists at its Cloud-default PHP version and will need a "+
 					"terraform apply retry OR a manual dashboard fix.\n\nUnderlying error: "+uerr.Error(),
+			)
+			return
+		}
+		env = updated
+	}
+
+	// § env-var reconciliation — POST /environments/:id/variables to
+	// write the HCL `variables` map into Cloud's env-var list. Uses
+	// `method=append` so Cloud's auto-generated APP_KEY survives when
+	// the operator doesn't manage it explicitly; a same-key entry in
+	// HCL overwrites Cloud's default. See v0.8.0 changelog + api docs.
+	if !plan.Variables.IsNull() && !plan.Variables.IsUnknown() && len(plan.Variables.Elements()) > 0 {
+		vars := make(map[string]string, len(plan.Variables.Elements()))
+		resp.Diagnostics.Append(plan.Variables.ElementsAs(ctx, &vars, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		pairs := mapToEnvVarPairs(vars)
+		updated, verr := r.client.SetEnvironmentVariables(ctx, env.ID, api.SetEnvironmentVariablesRequest{
+			Method:    api.EnvVarMethodAppend,
+			Variables: pairs,
+		})
+		if verr != nil {
+			resp.Diagnostics.AddError(
+				"Failed to write environment variables",
+				"Environment was created, but POST /environments/{id}/variables failed. "+
+					"The env now runs without the HCL-declared variables. "+
+					"Re-run `terraform apply` to retry.\n\nUnderlying error: "+verr.Error(),
 			)
 			return
 		}
@@ -425,19 +451,92 @@ func (r *EnvironmentResource) Update(ctx context.Context, req resource.UpdateReq
 		phpWrite := plan.PhpMajorVersion.ValueString() + ":1"
 		apiReq.PhpVersion = &phpWrite
 	}
-	if !plan.Variables.IsNull() && !plan.Variables.IsUnknown() {
-		vars := make(map[string]string, len(plan.Variables.Elements()))
-		resp.Diagnostics.Append(plan.Variables.ElementsAs(ctx, &vars, false)...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		apiReq.Variables = vars
-	}
+	// NOTE: `variables` is INTENTIONALLY NOT sent on PATCH — Cloud's
+	// env-root PATCH silently drops the field. Env vars land through
+	// POST /environments/:id/variables after the PATCH. See v0.8.0
+	// changelog + api docs.
 
 	env, err := r.client.UpdateEnvironment(ctx, plan.ID.ValueString(), apiReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to update environment", err.Error())
 		return
+	}
+
+	// § env-var reconciliation — same shape as Create, but with
+	// delete-first for keys the operator removed from the HCL map
+	// between the prior state and the new plan.
+	//
+	// Sequence:
+	//   1. Diff prior state keys vs new plan keys → delete removed keys.
+	//   2. POST /variables with method=append to (re)write the plan set.
+	//
+	// Cloud auto-generated APP_KEY (never in state unless HCL manages it)
+	// survives because delete only fires for keys previously in state.
+	var state EnvironmentResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	priorKeys := map[string]struct{}{}
+	if !state.Variables.IsNull() && !state.Variables.IsUnknown() {
+		priorMap := make(map[string]string, len(state.Variables.Elements()))
+		resp.Diagnostics.Append(state.Variables.ElementsAs(ctx, &priorMap, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		for k := range priorMap {
+			priorKeys[k] = struct{}{}
+		}
+	}
+
+	newVars := map[string]string{}
+	if !plan.Variables.IsNull() && !plan.Variables.IsUnknown() {
+		newVars = make(map[string]string, len(plan.Variables.Elements()))
+		resp.Diagnostics.Append(plan.Variables.ElementsAs(ctx, &newVars, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
+	// Delete keys present in prior state but absent from new plan.
+	toDelete := make([]string, 0, len(priorKeys))
+	for k := range priorKeys {
+		if _, ok := newVars[k]; !ok {
+			toDelete = append(toDelete, k)
+		}
+	}
+	if len(toDelete) > 0 {
+		updated, derr := r.client.DeleteEnvironmentVariables(ctx, env.ID, toDelete)
+		if derr != nil {
+			resp.Diagnostics.AddError(
+				"Failed to remove environment variables",
+				"POST /environments/{id}/variables/delete failed. Some keys removed "+
+					"from HCL may still be set on Cloud. Re-run `terraform apply` to retry.\n\n"+
+					"Underlying error: "+derr.Error(),
+			)
+			return
+		}
+		env = updated
+	}
+
+	// Append the new plan's variables.
+	if len(newVars) > 0 {
+		pairs := mapToEnvVarPairs(newVars)
+		updated, verr := r.client.SetEnvironmentVariables(ctx, env.ID, api.SetEnvironmentVariablesRequest{
+			Method:    api.EnvVarMethodAppend,
+			Variables: pairs,
+		})
+		if verr != nil {
+			resp.Diagnostics.AddError(
+				"Failed to write environment variables",
+				"POST /environments/{id}/variables failed. The env may be missing "+
+					"HCL-declared vars. Re-run `terraform apply` to retry.\n\n"+
+					"Underlying error: "+verr.Error(),
+			)
+			return
+		}
+		env = updated
 	}
 
 	applyEnvToModel(ctx, env, &plan, &resp.Diagnostics)
@@ -506,14 +605,78 @@ func applyEnvToModel(ctx context.Context, env *api.Environment, m *EnvironmentRe
 	preserveOrAssignBool(&m.UsesOctane, env.UsesOctane)
 	preserveOrAssignBool(&m.UsesHibernation, env.UsesHibernation)
 
-	// Variables: preserve plan map when Cloud returns nil.
-	if env.Variables != nil {
-		vars, d := types.MapValueFrom(ctx, types.StringType, env.Variables)
-		diags.Append(d...)
-		m.Variables = vars
+	// Variables: hydrate from Cloud's `environment_variables` array
+	// (v0.8.0+ read path), filtered against the keys ALREADY in
+	// state/plan. Cloud auto-generates keys (APP_KEY on env create,
+	// injected DB creds, LOG_CHANNEL, APP_URL, ...) that live outside
+	// terraform's management — hoisting the full Cloud list into
+	// state would create a delete-diff for every one of them on the
+	// next plan.
+	//
+	// The provider manages ONLY the keys terraform's HCL declared.
+	// Filter Cloud's response to keys already in the state map
+	// (m.Variables from prior state OR plan set at Create time). A
+	// key present in the plan but MISSING from Cloud's list surfaces
+	// as drift (nil value → deletion).
+	//
+	// Edge case — first-time Create: m.Variables is unknown/null
+	// until we populate it. We use plan values (set via the caller's
+	// upstream `req.Plan.Get(...)`) as the seed key set, then
+	// overwrite with Cloud values.
+	if !m.Variables.IsNull() && !m.Variables.IsUnknown() && len(m.Variables.Elements()) > 0 {
+		// Extract state/plan keys — these are the keys we manage.
+		managedKeys := map[string]string{}
+		diags.Append(m.Variables.ElementsAs(ctx, &managedKeys, false)...)
+
+		// Cloud is truth for values. Terraform's HCL is truth for
+		// which keys we manage. Intersect: keep ONLY keys that
+		// terraform manages AND Cloud currently has. Drift surfaces
+		// naturally — a terraform-managed key missing from Cloud
+		// drops from state, next plan detects config-vs-state
+		// mismatch and re-writes.
+		cloudMap := make(map[string]string, len(env.EnvironmentVariables))
+		for _, kv := range env.EnvironmentVariables {
+			cloudMap[kv.Key] = kv.Value
+		}
+
+		result := make(map[string]string, len(managedKeys))
+		for k := range managedKeys {
+			if v, ok := cloudMap[k]; ok {
+				result[k] = v
+			}
+			// else: key managed by terraform but Cloud lost it —
+			// drop from state. Next plan sees config wants it →
+			// diff triggers the write path.
+		}
+		if len(result) == 0 {
+			m.Variables = types.MapNull(types.StringType)
+		} else {
+			vars, d := types.MapValueFrom(ctx, types.StringType, result)
+			diags.Append(d...)
+			m.Variables = vars
+		}
 	} else if m.Variables.IsUnknown() || m.Variables.IsNull() {
 		m.Variables = types.MapNull(types.StringType)
 	}
+}
+
+// mapToEnvVarPairs turns a name→value map into the ordered array shape
+// Cloud's POST /environments/:id/variables endpoint accepts. Sorts by
+// key so re-emit is deterministic across `terraform plan` runs.
+func mapToEnvVarPairs(m map[string]string) []api.EnvironmentVariable {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]api.EnvironmentVariable, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, api.EnvironmentVariable{Key: k, Value: m[k]})
+	}
+	return out
 }
 
 // preserveOrAssign writes the API value into the destination ONLY when

@@ -101,6 +101,20 @@ type Environment struct {
 	// write-side `:1` suffix internally in the resource's Create/Update.
 	PhpMajorVersion *string `json:"php_major_version,omitempty"`
 
+	// EnvironmentVariables is Cloud's READ-SIDE env-var list, returned as
+	// `environment_variables: [{key, value}, ...]` by GET /environments/:id
+	// (see the SDK's `EnvironmentData::$environment_variables`). Cloud
+	// SILENTLY IGNORES a `variables` map on the env root PATCH — the
+	// vendor exposes a dedicated `POST /environments/:id/variables`
+	// endpoint that must be called separately to mutate this list.
+	// Added in v0.8.0.
+	//
+	// The provider resource layer at
+	// `internal/provider/resource_environment.go` orchestrates the two-call
+	// sequence: PATCH the env root for non-var fields, then POST /variables
+	// to reconcile the env-var list against the HCL `variables` map.
+	EnvironmentVariables []EnvironmentVariable `json:"environment_variables,omitempty"`
+
 	// Visual identifier — "green"/"orange"/"red"/etc. Surfaced in Cloud
 	// dashboard chip color. Nullable — Cloud picks a default when unset.
 	//
@@ -238,4 +252,84 @@ func (c *Client) DeleteEnvironment(ctx context.Context, id string) error {
 		return fmt.Errorf("delete environment: %w", err)
 	}
 	return nil
+}
+
+// EnvironmentVariable is one `{key, value}` pair returned by GET
+// /environments/:id under `environment_variables` and accepted by
+// POST /environments/:id/variables under `variables`. Added in v0.8.0.
+type EnvironmentVariable struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// EnvironmentVariableMethod names the merge semantics Cloud applies when
+// POST /environments/:id/variables lands. Matches the SDK's
+// `EnvironmentVariableMethod` enum.
+type EnvironmentVariableMethod string
+
+const (
+	// EnvVarMethodAppend merges the incoming list on top of Cloud's
+	// current set — same-key entries overwrite; missing keys survive.
+	EnvVarMethodAppend EnvironmentVariableMethod = "append"
+
+	// EnvVarMethodSet replaces the entire list — missing keys are
+	// wiped, incoming keys become the sole set.
+	EnvVarMethodSet EnvironmentVariableMethod = "set"
+)
+
+// SetEnvironmentVariablesRequest is the POST /environments/:id/variables body.
+// Added in v0.8.0.
+type SetEnvironmentVariablesRequest struct {
+	Method    EnvironmentVariableMethod `json:"method"`
+	Variables []EnvironmentVariable     `json:"variables"`
+}
+
+// DeleteEnvironmentVariablesRequest is the POST /environments/:id/variables/delete
+// body. Added in v0.8.0.
+type DeleteEnvironmentVariablesRequest struct {
+	Keys []string `json:"keys"`
+}
+
+// SetEnvironmentVariables writes env vars to Cloud via the dedicated
+// endpoint. `method` picks the merge semantics — pass EnvVarMethodAppend
+// to overlay on top of Cloud's auto-generated APP_KEY etc., or
+// EnvVarMethodSet to replace the entire list.
+//
+// Added in v0.8.0 to fix the silent-drop bug where PATCHing `variables`
+// on the env root returned HTTP 200 but never persisted the map. The
+// vendor SDK's `SetEnvironmentVariablesRequest` (path
+// `/environments/{id}/variables`) is the authoritative write path.
+func (c *Client) SetEnvironmentVariables(ctx context.Context, id string, req SetEnvironmentVariablesRequest) (*Environment, error) {
+	if id == "" {
+		return nil, errors.New("environment id is required")
+	}
+	if len(req.Variables) == 0 && req.Method == EnvVarMethodAppend {
+		// No-op — nothing to append. Return current state so callers
+		// see the fresh env unmodified.
+		return c.GetEnvironment(ctx, id)
+	}
+	var env Envelope[Environment]
+	path := fmt.Sprintf("/environments/%s/variables", id)
+	if err := c.do(ctx, "POST", path, req, &env); err != nil {
+		return nil, fmt.Errorf("set environment variables: %w", err)
+	}
+	return &env.Data, nil
+}
+
+// DeleteEnvironmentVariables removes a set of env var keys from Cloud
+// via POST /environments/:id/variables/delete. Added in v0.8.0.
+func (c *Client) DeleteEnvironmentVariables(ctx context.Context, id string, keys []string) (*Environment, error) {
+	if id == "" {
+		return nil, errors.New("environment id is required")
+	}
+	if len(keys) == 0 {
+		// Nothing to delete — return current state.
+		return c.GetEnvironment(ctx, id)
+	}
+	var env Envelope[Environment]
+	path := fmt.Sprintf("/environments/%s/variables/delete", id)
+	if err := c.do(ctx, "POST", path, DeleteEnvironmentVariablesRequest{Keys: keys}, &env); err != nil {
+		return nil, fmt.Errorf("delete environment variables: %w", err)
+	}
+	return &env.Data, nil
 }
